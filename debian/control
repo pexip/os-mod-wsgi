@@ -1,0 +1,39 @@
+Source: mod-wsgi
+Section: httpd
+Priority: optional
+Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
+Uploaders: Bernd Zeimetz <bzed@debian.org>, Piotr Ożarowski <piotr@debian.org>
+Build-Depends: debhelper (>= 5), python-all-dev, python3-all-dev, apache2-threaded-dev
+Homepage: http://www.modwsgi.org/
+Standards-Version: 3.9.2
+Vcs-Svn: svn://svn.debian.org/python-modules/packages/mod-wsgi/trunk/
+Vcs-Browser: http://svn.debian.org/viewsvn/python-modules/packages/mod-wsgi/trunk/
+
+Package: libapache2-mod-wsgi
+Architecture: any
+Depends: apache2, apache2.2-common, ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}
+Suggests: apache2-mpm-worker | apache2-mpm-event
+Provides: httpd-wsgi
+Description: Python WSGI adapter module for Apache
+ The mod_wsgi adapter is an Apache module that provides a WSGI (Web Server
+ Gateway Interface, a standard interface between web server software and
+ web applications written in Python) compliant interface for hosting Python
+ based web applications within Apache. The adapter provides significantly
+ better performance than using existing WSGI adapters for mod_python or CGI.
+ .
+ This package provides module for Python 2.X.
+
+Package: libapache2-mod-wsgi-py3
+Architecture: any
+Depends: apache2, apache2.2-common, ${shlibs:Depends}, ${misc:Depends}, ${python3:Depends}
+Suggests: apache2-mpm-worker | apache2-mpm-event
+Conflicts: libapache2-mod-wsgi
+Provides: httpd-wsgi
+Description: Python 3 WSGI adapter module for Apache
+ The mod_wsgi adapter is an Apache module that provides a WSGI (Web Server
+ Gateway Interface, a standard interface between web server software and
+ web applications written in Python) compliant interface for hosting Python
+ based web applications within Apache. The adapter provides significantly
+ better performance than using existing WSGI adapters for mod_python or CGI.
+ .
+ This package provides module for Python 3.X.
