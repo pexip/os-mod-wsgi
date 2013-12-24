@@ -1,13 +1,15 @@
 Source: mod-wsgi
 Section: httpd
 Priority: optional
-Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
-Uploaders: Bernd Zeimetz <bzed@debian.org>, Piotr Ożarowski <piotr@debian.org>
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Pexip-Original-Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
+XSBC-Pexip-Original-Uploaders: Bernd Zeimetz <bzed@debian.org>, Piotr Ożarowski <piotr@debian.org>
 Build-Depends: debhelper (>= 5), python-all-dev, python3-all-dev, apache2-threaded-dev
 Homepage: http://www.modwsgi.org/
 Standards-Version: 3.9.2
 Vcs-Svn: svn://svn.debian.org/python-modules/packages/mod-wsgi/trunk/
 Vcs-Browser: http://svn.debian.org/viewsvn/python-modules/packages/mod-wsgi/trunk/
+XS-Pexip-Upstream: http://archive.ubuntu.com/ubuntu/ precise
 
 Package: libapache2-mod-wsgi
 Architecture: any
