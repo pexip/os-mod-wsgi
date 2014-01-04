@@ -1,8 +1,52 @@
-mod-wsgi (3.3-4build1) precise; urgency=low
+mod-wsgi (3.4-4build1) trusty; urgency=medium
 
-  * No-change rebuild to drop spurious libsfgcc1 dependency on armhf.
+  * Rebuild for python3.4 as a supported python version.
 
- -- Adam Conrad <adconrad@ubuntu.com>  Fri, 02 Dec 2011 17:36:52 -0700
+ -- Matthias Klose <doko@ubuntu.com>  Sat, 04 Jan 2014 18:31:23 +0000
+
+mod-wsgi (3.4-4) unstable; urgency=low
+
+  * Fix wsgi applications segfaulting when run in daemon mode under Apache 2.4.
+    Thanks to Stephan Adig. (Closes: #719304)
+    - Add fix_crash_daemon_mode.patch, cherry-picked from upstream.
+  * Add myself as uploader.
+
+ -- Felix Geyer <fgeyer@debian.org>  Sat, 10 Aug 2013 18:17:01 +0200
+
+mod-wsgi (3.4-3) unstable; urgency=low
+
+  * Upload to unstable (python3 build dependency removed)
+  * Remove myself from Uploaders
+
+ -- Piotr Ożarowski <piotr@debian.org>  Thu, 30 May 2013 19:28:43 +0200
+
+mod-wsgi (3.4-2) experimental; urgency=low
+
+  [ Jakub Wilk ]
+  * Use canonical URIs for Vcs-* fields.
+
+  [ Felix Geyer ]
+  * Fix building against python3.3. Thanks to Dmitrijs Ledkovs for the
+    initial patch. (Closes: #692390)
+    - Add python-config.patch to make configure.ac query pythonX.Y-config
+      instead of python-distutils.
+  * Add support for Apache 2.4. Thanks to Ondřej Surý for the patch.
+    (Closes: #666818)
+  * Export build flags using /usr/share/dpkg/buildflags.mk.
+  * Bump Standards-Version to 3.9.4, no changes needed.
+
+  [ Piotr Ożarowski ]
+  * Add temporary python (>= 3.3) build dependency to make sure
+    python3-defaults from experimental is used during build
+
+ -- Piotr Ożarowski <piotr@debian.org>  Tue, 21 May 2013 22:03:58 +0200
+
+mod-wsgi (3.4-1) experimental; urgency=low
+
+  * New upstream release.
+  * d/p/python-3.2-compat.patch: Dropped, superseded by new release.
+
+ -- Clint Byrum <clint@ubuntu.com>  Thu, 23 Aug 2012 16:34:39 -0700
 
 mod-wsgi (3.3-4) unstable; urgency=low
 

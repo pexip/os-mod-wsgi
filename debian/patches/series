@@ -1,1 +1,2 @@
-python-3.2-compat.patch
+python-config.patch
+fix_crash_daemon_mode.patch

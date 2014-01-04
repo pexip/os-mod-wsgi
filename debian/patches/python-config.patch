@@ -1,0 +1,71 @@
+Description: Query pythonX.Y-config instead of python-distutils to fix building
+ against python3.3.
+Author: Dmitrijs Ledkovs <dmitrijs.ledkovs@canonical.com>
+Author: Felix Geyer <fgeyer@debian.org>
+Bug-Debian: http://bugs.debian.org/692390
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -77,14 +77,8 @@
+     from distutils import sysconfig; \
+     stdout.write((sysconfig.get_config_var("VERSION")))'`
+ 
+-CPPFLAGS1=`${PYTHON} -c 'from sys import stdout; \
+-    from distutils import sysconfig; \
+-    stdout.write("-I" + sysconfig.get_config_var("INCLUDEPY"))'`
+-
+-CPPFLAGS2=`${PYTHON} -c 'from sys import stdout; \
+-    from distutils import sysconfig; \
+-    stdout.write(" ".join(filter(lambda x: x.startswith("-D"), \
+-    sysconfig.get_config_var("CFLAGS").split())))'`
++CPPFLAGS1=`${PYTHON}-config --includes`
++[CPPFLAGS2=`${PYTHON}-config --cflags | sed 's|^-[^D][^ ]*||g; s| -[^D][^ ]*||g; s|^ ||; s| *$||g'`]
+ 
+ if test "${ENABLE_EMBEDDED}" != "yes"; then
+ CPPFLAGS3="-DMOD_WSGI_DISABLE_EMBEDDED"
+@@ -113,32 +106,8 @@
+     from distutils import sysconfig; \
+     stdout.write(sysconfig.get_config_var("PYTHONFRAMEWORK"))'`
+ 
+-if test "${PYTHONFRAMEWORKDIR}" = "no-framework" -o \
+-        "${ENABLE_FRAMEWORK}" != "yes"; then
+-    LDFLAGS1="-L${PYTHONLIBDIR}"
+-    LDFLAGS2="-L${PYTHONCFGDIR}"
+-
+-    LDLIBS1="-lpython${PYTHON_VERSION}"
+-    LDLIBS2=`${PYTHON} -c 'from sys import stdout; \
+-        from distutils import sysconfig; \
+-        stdout.write(sysconfig.get_config_var("LIBS"))'`
+-    LDLIBS3=`${PYTHON} -c 'from sys import stdout; \
+-        from distutils import sysconfig; \
+-        stdout.write(sysconfig.get_config_var("SYSLIBS"))'`
+-else
+-    LDFLAGS1="-Wl,-F${PYTHONFRAMEWORKPREFIX} -framework ${PYTHONFRAMEWORK}"
+-
+-    VERSION="${PYTHON_VERSION}"
+-    STRING="${PYTHONFRAMEWORKDIR}/Versions/${VERSION}/${PYTHONFRAMEWORK}"
+-    LDFLAGS2=`${PYTHON} -c "from sys import stdout; \
+-        from distutils import sysconfig; \
+-        stdout.write(sysconfig.get_config_var(
+-        \"LINKFORSHARED\").replace(\"${STRING}\", ''))"`
+-
+-    LDLIBS1=`${PYTHON} -c 'from sys import stdout; \
+-        from distutils import sysconfig; \
+-        stdout.write(sysconfig.get_config_var("LIBS"))'`
+-fi
++[LDFLAGS1=`${PYTHON}-config --ldflags | sed 's|^-L[^ ]*||g; s| -L[^ ]*||g; s|^ ||; s| *$||g'`]
++[LDLIBS1=`${PYTHON}-config --ldflags | sed 's|^-l[^ ]*||g; s| -l[^ ]*||g; s|^ ||; s| *$||g'`]
+ 
+ CFLAGS1=""
+ for arg in ${CFLAGS}
+@@ -157,8 +125,8 @@
+ fi
+ 
+ CFLAGS="${CFLAGS1} ${CFLAGS2}"
+-LDFLAGS="${LDFLAGS} ${LDFLAGS1} ${LDFLAGS2} ${LDFLAGS3}"
+-LDLIBS="${LDLIBS} ${LDLIBS1} ${LDLIBS2} ${LDLIBS3}"
++LDFLAGS="${LDFLAGS} ${LDFLAGS1} ${LDFLAGS3}"
++LDLIBS="${LDLIBS} ${LDLIBS1}"
+ 
+ AC_SUBST(CFLAGS)
+ AC_SUBST(LDFLAGS)
