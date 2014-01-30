@@ -1,7 +1,7 @@
 /* vim: set sw=4 expandtab : */
 
 /*
- * Copyright 2007-2010 GRAHAM DUMPLETON
+ * Copyright 2007-2012 GRAHAM DUMPLETON
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -96,6 +96,13 @@ typedef int apr_lockmech_e;
 #include "http_config.h"
 #include "ap_listen.h"
 #include "apr_version.h"
+
+#include "apr_optional.h"
+
+APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec *));
+APR_DECLARE_OPTIONAL_FN(char *, ssl_var_lookup, (apr_pool_t *,
+      server_rec *, conn_rec *, request_rec *, char *));
+
 #endif
 
 #include "ap_config.h"
@@ -193,6 +200,9 @@ static PyTypeObject Auth_Type;
 #endif
 #if AP_MODULE_MAGIC_AT_LEAST(20060110,0)
 #define MOD_WSGI_WITH_AUTHZ_PROVIDER 1
+#if AP_MODULE_MAGIC_AT_LEAST(20100919,0)
+#define MOD_WSGI_WITH_AUTHZ_PROVIDER_PARSED 1
+#endif
 #endif
 #endif
 
@@ -372,8 +382,8 @@ static apr_status_t wsgi_utf8_to_unicode_path(apr_wchar_t* retstr,
 /* Version and module information. */
 
 #define MOD_WSGI_MAJORVERSION_NUMBER 3
-#define MOD_WSGI_MINORVERSION_NUMBER 3
-#define MOD_WSGI_VERSION_STRING "3.3"
+#define MOD_WSGI_MINORVERSION_NUMBER 4
+#define MOD_WSGI_VERSION_STRING "3.4"
 
 #if AP_SERVER_MAJORVERSION_NUMBER < 2
 module MODULE_VAR_EXPORT wsgi_module;
@@ -385,6 +395,10 @@ module AP_MODULE_DECLARE_DATA wsgi_module;
 
 #define WSGI_RELOAD_MODULE 0
 #define WSGI_RELOAD_PROCESS 1
+
+/* Python interpreter state. */
+
+static PyThreadState *wsgi_main_tstate = NULL;
 
 /* Base server object. */
 
@@ -453,6 +467,10 @@ typedef struct {
 
     int python_optimize;
     int py3k_warning_flag;
+    int dont_write_bytecode;
+
+    const char *lang;
+    const char *locale;
 
     const char *python_home;
     const char *python_path;
@@ -478,6 +496,8 @@ typedef struct {
     int script_reloading;
     int error_override;
     int chunked_request;
+
+    int enable_sendfile;
 
 #if AP_SERVER_MAJORVERSION_NUMBER >= 2
     apr_hash_t *handler_scripts;
@@ -522,6 +542,10 @@ static WSGIServerConfig *newWSGIServerConfig(apr_pool_t *p)
 
     object->py3k_warning_flag = -1;
     object->python_optimize = -1;
+    object->dont_write_bytecode = -1;
+
+    object->lang = NULL;
+    object->locale = NULL;
 
     object->python_home = NULL;
     object->python_path = NULL;
@@ -551,6 +575,8 @@ static WSGIServerConfig *newWSGIServerConfig(apr_pool_t *p)
     object->script_reloading = -1;
     object->error_override = -1;
     object->chunked_request = -1;
+
+    object->enable_sendfile = -1;
 
     return object;
 }
@@ -639,6 +665,11 @@ static void *wsgi_merge_server_config(apr_pool_t *p, void *base_conf,
     else
         config->chunked_request = parent->chunked_request;
 
+    if (child->enable_sendfile != -1)
+        config->enable_sendfile = child->enable_sendfile;
+    else
+        config->enable_sendfile = parent->enable_sendfile;
+
 #if AP_SERVER_MAJORVERSION_NUMBER >= 2
     if (!child->handler_scripts)
         config->handler_scripts = parent->handler_scripts;
@@ -670,6 +701,8 @@ typedef struct {
     int error_override;
     int chunked_request;
 
+    int enable_sendfile;
+
     WSGIScriptFile *access_script;
     WSGIScriptFile *auth_user_script;
     WSGIScriptFile *auth_group_script;
@@ -700,6 +733,8 @@ static WSGIDirectoryConfig *newWSGIDirectoryConfig(apr_pool_t *p)
     object->script_reloading = -1;
     object->error_override = -1;
     object->chunked_request = -1;
+
+    object->enable_sendfile = -1;
 
     object->access_script = NULL;
     object->auth_user_script = NULL;
@@ -781,6 +816,11 @@ static void *wsgi_merge_dir_config(apr_pool_t *p, void *base_conf,
     else
         config->chunked_request = parent->chunked_request;
 
+    if (child->enable_sendfile != -1)
+        config->enable_sendfile = child->enable_sendfile;
+    else
+        config->enable_sendfile = parent->enable_sendfile;
+
     if (child->access_script)
         config->access_script = child->access_script;
     else
@@ -836,6 +876,8 @@ typedef struct {
     int script_reloading;
     int error_override;
     int chunked_request;
+
+    int enable_sendfile;
 
     WSGIScriptFile *access_script;
     WSGIScriptFile *auth_user_script;
@@ -1183,6 +1225,14 @@ static WSGIRequestConfig *wsgi_create_req_config(apr_pool_t *p, request_rec *r)
             config->chunked_request = 0;
     }
 
+    config->enable_sendfile = dconfig->enable_sendfile;
+
+    if (config->enable_sendfile < 0) {
+        config->enable_sendfile = sconfig->enable_sendfile;
+        if (config->enable_sendfile < 0)
+            config->enable_sendfile = 0;
+    }
+
     config->access_script = dconfig->access_script;
 
     config->auth_user_script = dconfig->auth_user_script;
@@ -1251,6 +1301,7 @@ static WSGIRequestConfig *wsgi_create_req_config(apr_pool_t *p, request_rec *r)
 #include <sys/sem.h>
 #endif
 
+#include <locale.h>
 #include <sys/un.h>
 
 #ifndef WSGI_LISTEN_BACKLOG
@@ -1275,12 +1326,18 @@ typedef struct {
     uid_t uid;
     const char *group;
     gid_t gid;
+    const char *groups_list;
+    int groups_count;
+    gid_t *groups;
     int processes;
     int multiprocess;
     int threads;
     int umask;
     const char *root;
     const char *home;
+    const char *lang;
+    const char *locale;
+    const char *python_home;
     const char *python_path;
     const char *python_eggs;
     int stack_size;
@@ -1295,6 +1352,8 @@ typedef struct {
     const char *script_group;
     int cpu_time_limit;
     int cpu_priority;
+    rlim_t memory_limit;
+    rlim_t virtual_memory_limit;
     const char *socket;
     int listener_fd;
     const char* mutex_path;
@@ -1761,8 +1820,14 @@ static PyObject *Log_writelines(LogObject *self, PyObject *args)
 
     while ((item = PyIter_Next(iterator))) {
         PyObject *result = NULL;
+        PyObject *args = NULL;
 
-        result = Log_write(self, item);
+        args = PyTuple_Pack(1, item);
+
+        result = Log_write(self, args);
+
+        Py_DECREF(args);
+        Py_DECREF(item);
 
         if (!result) {
             Py_DECREF(iterator);
@@ -3187,7 +3252,7 @@ static int Adapter_output(AdapterObject *self, const char *data, int length,
                 if (*self->config->process_group)
                     r->content_type = apr_pstrdup(r->pool, value);
                 else
-                    ap_set_content_type(r, value);
+                    ap_set_content_type(r, apr_pstrdup(r->pool, value));
 #endif
             }
             else if (!strcasecmp(name, "Content-Length")) {
@@ -3455,7 +3520,6 @@ static int Adapter_output_file(AdapterObject *self, apr_file_t* tmpfile,
 #endif
 
 #if AP_SERVER_MAJORVERSION_NUMBER >= 2
-APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec *));
 static APR_OPTIONAL_FN_TYPE(ssl_is_https) *wsgi_is_https = NULL;
 #endif
 
@@ -3517,7 +3581,7 @@ static PyObject *Adapter_environ(AdapterObject *self)
 
     /* Now setup all the WSGI specific environment values. */
 
-    object = Py_BuildValue("(ii)", 1, 1);
+    object = Py_BuildValue("(ii)", 1, 0);
     PyDict_SetItemString(vars, "wsgi.version", object);
     Py_DECREF(object);
 
@@ -3566,6 +3630,18 @@ static PyObject *Adapter_environ(AdapterObject *self)
     }
 
     /*
+     * We remove the HTTPS variable because WSGI compliant
+     * applications shouldn't rely on it. Instead they should
+     * use wsgi.url_scheme. We do this even if SetEnv was
+     * used to set HTTPS from Apache configuration. That is
+     * we convert it into the correct variable and remove the
+     * original.
+     */
+
+    if (scheme)
+        PyDict_DelItemString(vars, "HTTPS");
+
+    /*
      * Setup log object for WSGI errors. Don't decrement
      * reference to log object as keep reference to it.
      */
@@ -3598,10 +3674,33 @@ static PyObject *Adapter_environ(AdapterObject *self)
      */
 
     if (!wsgi_daemon_pool && self->config->pass_apache_request) {
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 2
+        object = PyCapsule_New(self->r, 0, 0);
+#else
         object = PyCObject_FromVoidPtr(self->r, 0);
+#endif
         PyDict_SetItemString(vars, "apache.request_rec", object);
         Py_DECREF(object);
     }
+
+    /*
+     * Extensions for accessing SSL certificate information from
+     * mod_ssl when in use.
+     */
+
+#if 0
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+    if (!wsgi_daemon_pool) {
+        object = PyObject_GetAttrString((PyObject *)self, "ssl_is_https");
+        PyDict_SetItemString(vars, "mod_ssl.is_https", object);
+        Py_DECREF(object);
+
+        object = PyObject_GetAttrString((PyObject *)self, "ssl_var_lookup");
+        PyDict_SetItemString(vars, "mod_ssl.var_lookup", object);
+        Py_DECREF(object);
+    }
+#endif
+#endif
 
     return vars;
 }
@@ -3673,7 +3772,7 @@ static int Adapter_process_file_wrapper(AdapterObject *self)
      * cannot enable that feature.
      */
 
-    if (!wsgi_daemon_pool)
+    if (self->config->enable_sendfile)
         apr_os_file_put(&tmpfile, &fd, APR_SENDFILE_ENABLED, self->r->pool);
     else
         apr_os_file_put(&tmpfile, &fd, 0, self->r->pool);
@@ -3904,6 +4003,23 @@ static int Adapter_run(AdapterObject *self, PyObject *object)
             Py_XDECREF(iterator);
         }
 
+        /*
+         * Log warning if more response content generated than was
+         * indicated, or less if there was no errors generated by
+         * the application.
+         */
+
+        if (self->content_length_set && ((!PyErr_Occurred() &&
+            self->output_length != self->content_length) ||
+            (self->output_length > self->content_length))) {
+            ap_log_rerror(APLOG_MARK, WSGI_LOG_DEBUG(0), self->r,
+                          "mod_wsgi (pid=%d): Content length mismatch, "
+                          "expected %s, response generated %s: %s", getpid(),
+                          apr_off_t_toa(self->r->pool, self->content_length),
+                          apr_off_t_toa(self->r->pool, self->output_length),
+                          self->r->filename);
+        }
+
         if (PyErr_Occurred()) {
             /*
              * Response content has already been sent, so cannot
@@ -3944,23 +4060,6 @@ static int Adapter_run(AdapterObject *self, PyObject *object)
     Py_DECREF(start);
     Py_DECREF(vars);
 
-    /*
-     * Log warning if more response content generated than was
-     * indicated, or less if there was no errors generated by
-     * the application.
-     */
-
-    if (self->content_length_set && ((!PyErr_Occurred() &&
-        self->output_length != self->content_length) ||
-        (self->output_length > self->content_length))) {
-        ap_log_rerror(APLOG_MARK, WSGI_LOG_DEBUG(0), self->r,
-                      "mod_wsgi (pid=%d): Content length mismatch, "
-                      "expected %s, response generated %s: %s", getpid(),
-                      apr_off_t_toa(self->r->pool, self->content_length),
-                      apr_off_t_toa(self->r->pool, self->output_length),
-                      self->r->filename);
-    }
-
     /* Log details of any final Python exceptions. */
 
     if (PyErr_Occurred())
@@ -3982,6 +4081,7 @@ static int Adapter_run(AdapterObject *self, PyObject *object)
 static PyObject *Adapter_write(AdapterObject *self, PyObject *args)
 {
     PyObject *item = NULL;
+    PyObject *latin_item = NULL;
     const char *data = NULL;
     int length = 0;
 
@@ -3995,12 +4095,10 @@ static PyObject *Adapter_write(AdapterObject *self, PyObject *args)
 
 #if PY_MAJOR_VERSION >= 3
     if (PyUnicode_Check(item)) {
-        PyObject *latin_item;
         latin_item = PyUnicode_AsLatin1String(item);
         if (!latin_item) {
             PyErr_Format(PyExc_TypeError, "byte string value expected, "
                          "value containing non 'latin-1' characters found");
-            Py_DECREF(item);
             return NULL;
         }
 
@@ -4012,15 +4110,19 @@ static PyObject *Adapter_write(AdapterObject *self, PyObject *args)
     if (!PyString_Check(item)) {
         PyErr_Format(PyExc_TypeError, "byte string value expected, value "
                      "of type %.200s found", item->ob_type->tp_name);
-        Py_DECREF(item);
+        Py_XDECREF(latin_item);
         return NULL;
     }
 
     data = PyString_AsString(item);
     length = PyString_Size(item);
 
-    if (!Adapter_output(self, data, length, 1))
+    if (!Adapter_output(self, data, length, 1)) {
+        Py_XDECREF(latin_item);
         return NULL;
+    }
+
+    Py_XDECREF(latin_item);
 
     Py_INCREF(Py_None);
     return Py_None;
@@ -4046,10 +4148,105 @@ static PyObject *Adapter_file_wrapper(AdapterObject *self, PyObject *args)
     return newStreamObject(self, filelike, blksize);
 }
 
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+
+static PyObject *Adapter_ssl_is_https(AdapterObject *self, PyObject *args)
+{
+    APR_OPTIONAL_FN_TYPE(ssl_is_https) *ssl_is_https = 0;
+
+    if (!self->r) {
+        PyErr_SetString(PyExc_RuntimeError, "request object has expired");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, ":ssl_is_https"))
+        return NULL;
+
+    ssl_is_https = APR_RETRIEVE_OPTIONAL_FN(ssl_is_https);
+
+    if (ssl_is_https == 0)
+      return Py_BuildValue("i", 0);
+
+    return Py_BuildValue("i", ssl_is_https(self->r->connection));
+}
+
+static PyObject *Adapter_ssl_var_lookup(AdapterObject *self, PyObject *args)
+{
+    APR_OPTIONAL_FN_TYPE(ssl_var_lookup) *ssl_var_lookup = 0;
+
+    PyObject *item = NULL;
+
+    char *name = 0;
+    char *value = 0;
+
+    if (!self->r) {
+        PyErr_SetString(PyExc_RuntimeError, "request object has expired");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "O:ssl_var_lookup", &item))
+        return NULL;
+
+#if PY_MAJOR_VERSION >= 3
+    if (PyUnicode_Check(item)) {
+        PyObject *latin_item;
+        latin_item = PyUnicode_AsLatin1String(item);
+        if (!latin_item) {
+            PyErr_Format(PyExc_TypeError, "byte string value expected, "
+                         "value containing non 'latin-1' characters found");
+            Py_DECREF(item);
+            return NULL;
+        }
+
+        Py_DECREF(item);
+        item = latin_item;
+    }
+#endif
+
+    if (!PyString_Check(item)) {
+        PyErr_Format(PyExc_TypeError, "byte string value expected, value "
+                     "of type %.200s found", item->ob_type->tp_name);
+        Py_DECREF(item);
+        return NULL;
+    }
+
+    name = PyString_AsString(item);
+
+    ssl_var_lookup = APR_RETRIEVE_OPTIONAL_FN(ssl_var_lookup);
+
+    if (ssl_var_lookup == 0)
+    {
+        Py_XINCREF(Py_None);
+
+        return Py_None;
+    }
+
+    value = ssl_var_lookup(self->r->pool, self->r->server,
+                           self->r->connection, self->r, name);
+
+    if (!value) {
+        Py_XINCREF(Py_None);
+
+        return Py_None;
+    }
+
+#if PY_MAJOR_VERSION >= 3
+    return PyUnicode_DecodeLatin1(value, strlen(value), NULL);
+#else
+    return PyString_FromString(value);
+#endif
+}
+
+#endif
+
 static PyMethodDef Adapter_methods[] = {
     { "start_response", (PyCFunction)Adapter_start_response, METH_VARARGS, 0 },
     { "write",          (PyCFunction)Adapter_write, METH_VARARGS, 0 },
     { "file_wrapper",   (PyCFunction)Adapter_file_wrapper, METH_VARARGS, 0 },
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+    { "ssl_is_https",   (PyCFunction)Adapter_ssl_is_https, METH_VARARGS, 0 },
+    { "ssl_var_lookup", (PyCFunction)Adapter_ssl_var_lookup, METH_VARARGS, 0 },
+#endif
     { NULL, NULL}
 };
 
@@ -4568,6 +4765,17 @@ static InterpreterObject *newInterpreterObject(const char *name)
                            &wsgi_signal_method[0], NULL));
         Py_DECREF(module);
     }
+
+    /*
+     * Force loading of codecs into interpreter. This has to be
+     * done as not otherwise done in sub interpreters and if not
+     * done, code running in sub interpreters can fail on some
+     * platforms if a unicode string is added in sys.path and an
+     * import then done.
+     */
+
+    item = PyCodec_Encoder("ascii");
+    Py_XDECREF(item);
 
     /*
      * If running in daemon process, override as appropriate
@@ -5147,15 +5355,22 @@ static void Interpreter_dealloc(InterpreterObject *self)
     PyObject *exitfunc = NULL;
     PyObject *module = NULL;
 
+    PyThreadState *tstate_enter = NULL;
+
     /*
-     * We should always enter here with the Python GIL held, but
-     * there will be no active thread state. Note that it should
-     * be safe to always assume that the simplified GIL state
-     * API lock was originally unlocked as always calling in
-     * from an Apache thread outside of Python.
+     * We should always enter here with the Python GIL
+     * held and an active thread state. This should only
+     * now occur when shutting down interpreter and not
+     * when releasing interpreter as don't support
+     * recyling of interpreters within the process. Thus
+     * the thread state should be that for the main
+     * Python interpreter. Where dealing with a named
+     * sub interpreter, we need to change the thread
+     * state to that which was originally used to create
+     * that sub interpreter before doing anything.
      */
 
-    PyEval_ReleaseLock();
+    tstate_enter = PyThreadState_Get();
 
     if (*self->name) {
 #if APR_HAS_THREADS
@@ -5194,10 +5409,13 @@ static void Interpreter_dealloc(InterpreterObject *self)
         tstate = self->tstate;
 #endif
 
-        PyEval_AcquireThread(tstate);
+        /*
+         * Swap to interpreter thread state that was used when
+         * the sub interpreter was created.
+         */
+
+        PyThreadState_Swap(tstate);
     }
-    else
-        PyGILState_Ensure();
 
     if (self->owner) {
         Py_BEGIN_ALLOW_THREADS
@@ -5492,20 +5710,7 @@ static void Interpreter_dealloc(InterpreterObject *self)
 
     /* If we own it, we destroy it. */
 
-    if (!self->owner) {
-        if (*self->name) {
-            tstate = PyThreadState_Get();
-
-            PyThreadState_Clear(tstate);
-            PyEval_ReleaseThread(tstate);
-            PyThreadState_Delete(tstate);
-        }
-        else
-            PyGILState_Release(PyGILState_UNLOCKED);
-
-        PyEval_AcquireLock();
-    }
-    else {
+    if (self->owner) {
         /*
          * We need to destroy all the thread state objects
          * associated with the interpreter. If there are
@@ -5539,6 +5744,8 @@ static void Interpreter_dealloc(InterpreterObject *self)
         /* Can now destroy the interpreter. */
 
         Py_EndInterpreter(tstate);
+
+        PyThreadState_Swap(tstate_enter);
     }
 
     free(self->name);
@@ -5647,7 +5854,14 @@ static apr_status_t wsgi_python_term()
     ap_log_error(APLOG_MARK, WSGI_LOG_INFO(0), wsgi_server,
                  "mod_wsgi (pid=%d): Terminating Python.", getpid());
 
-    PyGILState_Ensure();
+    /*
+     * We should be executing in the main thread again at this
+     * point but without the GIL, so simply restore the original
+     * thread state for that thread that we remembered when we
+     * initialised the interpreter.
+     */
+
+    PyEval_AcquireThread(wsgi_main_tstate);
 
     /*
      * Work around bug in Python 3.X whereby it will crash if
@@ -5716,6 +5930,8 @@ static apr_status_t wsgi_python_parent_cleanup(void *data)
 
 static void wsgi_python_init(apr_pool_t *p)
 {
+    const char *python_home = 0;
+
 #if defined(DARWIN) && (AP_SERVER_MAJORVERSION_NUMBER < 2)
     static int initialized = 0;
 #else
@@ -5731,6 +5947,13 @@ static void wsgi_python_init(apr_pool_t *p)
 #if PY_MAJOR_VERSION == 2 && PY_MINOR_VERSION >= 6
         if (wsgi_server_config->py3k_warning_flag == 1)
             Py_Py3kWarningFlag++;
+#endif
+
+        /* Disable writing of byte code files. */
+
+#if PY_MAJOR_VERSION == 2 && PY_MINOR_VERSION >= 6
+        if (wsgi_server_config->dont_write_bytecode == 1)
+            Py_DontWriteBytecodeFlag++;
 #endif
 
         /* Check for Python paths and optimisation flag. */
@@ -5772,31 +5995,38 @@ static void wsgi_python_init(apr_pool_t *p)
 
         /* Check for Python HOME being overridden. */
 
+        python_home = wsgi_server_config->python_home;
+
+#if defined(MOD_WSGI_WITH_DAEMONS)
+        if (wsgi_daemon_process && wsgi_daemon_process->group->python_home)
+            python_home = wsgi_daemon_process->group->python_home;
+#endif
+
 #if PY_MAJOR_VERSION >= 3
-        if (wsgi_server_config->python_home) {
+        if (python_home) {
             wchar_t *s = NULL;
-            int len = strlen(wsgi_server_config->python_home)+1;
+            int len = strlen(python_home)+1;
 
             ap_log_error(APLOG_MARK, WSGI_LOG_INFO(0), wsgi_server,
                          "mod_wsgi (pid=%d): Python home %s.", getpid(),
-                         wsgi_server_config->python_home);
+                         python_home);
 
             s = (wchar_t *)apr_palloc(p, len*sizeof(wchar_t));
 
 #if defined(WIN32) && defined(APR_HAS_UNICODE_FS)
-            wsgi_utf8_to_unicode_path(s, len, wsgi_server_config->python_home);
+            wsgi_utf8_to_unicode_path(s, len, python_home);
 #else
-            mbstowcs(s, wsgi_server_config->python_home, len);
+            mbstowcs(s, python_home, len);
 #endif
             Py_SetPythonHome(s);
         }
 #else
-        if (wsgi_server_config->python_home) {
+        if (python_home) {
             ap_log_error(APLOG_MARK, WSGI_LOG_INFO(0), wsgi_server,
                          "mod_wsgi (pid=%d): Python home %s.", getpid(),
-                         wsgi_server_config->python_home);
+                         python_home);
 
-            Py_SetPythonHome((char *)wsgi_server_config->python_home);
+            Py_SetPythonHome((char *)python_home);
         }
 #endif
 
@@ -5806,7 +6036,7 @@ static void wsgi_python_init(apr_pool_t *p)
          * stdin/stdout have been initialised and aren't null.
          */
 
-#if defined(WIN32) && PY_MAJOR_VERSION >= 3
+#if defined(WIN32) && PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION < 3
         _wputenv(L"PYTHONIOENCODING=cp1252:backslashreplace");
 #endif
 
@@ -5822,15 +6052,24 @@ static void wsgi_python_init(apr_pool_t *p)
         /* Initialise threading. */
 
         PyEval_InitThreads();
-        PyThreadState_Swap(NULL);
-        PyEval_ReleaseLock();
+
+        /*
+         * We now want to release the GIL. Before we do that
+         * though we remember what the current thread state is.
+         * We will use that later to restore the main thread
+         * state when we want to cleanup interpreters on
+         * shutdown.
+         */
+
+        wsgi_main_tstate = PyThreadState_Get();
+        PyEval_ReleaseThread(wsgi_main_tstate);
 
         wsgi_python_initialized = 1;
 
-    /*
-     * Register cleanups to be performed on parent restart
-     * or shutdown. This will destroy Python itself.
-     */
+        /*
+         * Register cleanups to be performed on parent restart
+         * or shutdown. This will destroy Python itself.
+         */
 
 #if AP_SERVER_MAJORVERSION_NUMBER < 2
         ap_register_cleanup(p, NULL, wsgi_python_parent_cleanup,
@@ -5879,7 +6118,11 @@ static InterpreterObject *wsgi_acquire_interpreter(const char *name)
 
     /*
      * This function should never be called when the
-     * Python GIL is held, so need to acquire it.
+     * Python GIL is held, so need to acquire it. Even
+     * though we may need to work with a sub
+     * interpreter, we need to acquire GIL against main
+     * interpreter first to work with interpreter
+     * dictionary.
      */
 
     state = PyGILState_Ensure();
@@ -5998,6 +6241,8 @@ static void wsgi_release_interpreter(InterpreterObject *handle)
 {
     PyThreadState *tstate = NULL;
 
+    PyGILState_STATE state;
+
     /*
      * Need to release and destroy the thread state that
      * was created against the interpreter. This will
@@ -6023,11 +6268,11 @@ static void wsgi_release_interpreter(InterpreterObject *handle)
      * in its destruction if its the last reference.
      */
 
-    PyEval_AcquireLock();
+    state = PyGILState_Ensure();
 
     Py_DECREF(handle);
 
-    PyEval_ReleaseLock();
+    PyGILState_Release(state);
 }
 
 /*
@@ -6428,7 +6673,7 @@ static int wsgi_execute_script(request_rec *r)
                 wsgi_release_interpreter(interp);
 
                 r->status = HTTP_INTERNAL_SERVER_ERROR;
-                r->status_line = "0 Rejected";
+                r->status_line = "200 Rejected";
 
                 wsgi_daemon_shutdown++;
                 kill(getpid(), SIGINT);
@@ -6479,7 +6724,7 @@ static int wsgi_execute_script(request_rec *r)
         apr_bucket_brigade *bb;
         apr_bucket *b;
 
-        const char *data = "Status: 0 Continue\r\n\r\n";
+        const char *data = "Status: 200 Continue\r\n\r\n";
         int length = strlen(data);
 
         filters = r->output_filters;
@@ -6630,7 +6875,14 @@ static apr_status_t wsgi_python_child_cleanup(void *data)
     apr_thread_mutex_lock(wsgi_interp_lock);
 #endif
 
-    PyEval_AcquireLock();
+    /*
+     * We should be executing in the main thread again at this
+     * point but without the GIL, so simply restore the original
+     * thread state for that thread that we remembered when we
+     * initialised the interpreter.
+     */
+
+    PyEval_AcquireThread(wsgi_main_tstate);
 
     /*
      * Extract a handle to the main Python interpreter from
@@ -6668,7 +6920,13 @@ static apr_status_t wsgi_python_child_cleanup(void *data)
 
     Py_DECREF(interp);
 
-    PyEval_ReleaseLock();
+    /*
+     * The code which performs actual shutdown of the main
+     * interpreter expects to be called without the GIL, so
+     * we release it here again.
+     */
+
+    PyEval_ReleaseThread(wsgi_main_tstate);
 
     /*
      * Destroy Python itself including the main interpreter.
@@ -7731,6 +7989,36 @@ static const char *wsgi_set_chunked_request(cmd_parms *cmd, void *mconfig,
     return NULL;
 }
 
+static const char *wsgi_set_enable_sendfile(cmd_parms *cmd, void *mconfig,
+                                            const char *f)
+{
+    if (cmd->path) {
+        WSGIDirectoryConfig *dconfig = NULL;
+        dconfig = (WSGIDirectoryConfig *)mconfig;
+
+        if (strcasecmp(f, "Off") == 0)
+            dconfig->enable_sendfile = 0;
+        else if (strcasecmp(f, "On") == 0)
+            dconfig->enable_sendfile = 1;
+        else
+            return "WSGIEnableSendfile must be one of: Off | On";
+    }
+    else {
+        WSGIServerConfig *sconfig = NULL;
+        sconfig = ap_get_module_config(cmd->server->module_config,
+                                       &wsgi_module);
+
+        if (strcasecmp(f, "Off") == 0)
+            sconfig->enable_sendfile = 0;
+        else if (strcasecmp(f, "On") == 0)
+            sconfig->enable_sendfile = 1;
+        else
+            return "WSGIEnableSendfile must be one of: Off | On";
+    }
+
+    return NULL;
+}
+
 static const char *wsgi_set_access_script(cmd_parms *cmd, void *mconfig,
                                           const char *args)
 {
@@ -7961,6 +8249,28 @@ static const char *wsgi_add_handler_script(cmd_parms *cmd, void *mconfig,
         apr_hash_set(sconfig->handler_scripts, name, APR_HASH_KEY_STRING,
                      object);
     }
+
+    return NULL;
+}
+
+static const char *wsgi_set_dont_write_bytecode(cmd_parms *cmd, void *mconfig,
+                                                const char *f)
+{
+    const char *error = NULL;
+    WSGIServerConfig *sconfig = NULL;
+
+    error = ap_check_cmd_context(cmd, GLOBAL_ONLY);
+    if (error != NULL)
+        return error;
+
+    sconfig = ap_get_module_config(cmd->server->module_config, &wsgi_module);
+
+    if (strcasecmp(f, "Off") == 0)
+        sconfig->dont_write_bytecode = 0;
+    else if (strcasecmp(f, "On") == 0)
+        sconfig->dont_write_bytecode = 1;
+    else
+        return "WSGIDontWriteBytecode must be one of: Off | On";
 
     return NULL;
 }
@@ -8256,6 +8566,14 @@ static void wsgi_build_environment(request_rec *r)
 
     apr_table_setn(r->subprocess_env, "mod_wsgi.input_chunked",
                    apr_psprintf(r->pool, "%d", !!r->read_chunked));
+
+    apr_table_setn(r->subprocess_env, "mod_wsgi.enable_sendfile",
+                   apr_psprintf(r->pool, "%d", config->enable_sendfile));
+
+#if defined(MOD_WSGI_WITH_DAEMONS)
+    apr_table_setn(r->subprocess_env, "mod_wsgi.queue_start",
+                   apr_psprintf(r->pool, "%" APR_TIME_T_FMT, r->request_time));
+#endif
 }
 
 typedef struct {
@@ -8369,13 +8687,133 @@ static PyObject *Dispatch_environ(DispatchObject *self, const char *group)
      */
 
     if (!wsgi_daemon_pool && self->config->pass_apache_request) {
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 2
+        object = PyCapsule_New(self->r, 0, 0);
+#else
         object = PyCObject_FromVoidPtr(self->r, 0);
+#endif
         PyDict_SetItemString(vars, "apache.request_rec", object);
         Py_DECREF(object);
     }
 
+    /*
+     * Extensions for accessing SSL certificate information from
+     * mod_ssl when in use.
+     */
+
+#if 0
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+    object = PyObject_GetAttrString((PyObject *)self, "ssl_is_https");
+    PyDict_SetItemString(vars, "mod_ssl.is_https", object);
+    Py_DECREF(object);
+
+    object = PyObject_GetAttrString((PyObject *)self, "ssl_var_lookup");
+    PyDict_SetItemString(vars, "mod_ssl.var_lookup", object);
+    Py_DECREF(object);
+#endif
+#endif
+
     return vars;
 }
+
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+
+static PyObject *Dispatch_ssl_is_https(DispatchObject *self, PyObject *args)
+{
+    APR_OPTIONAL_FN_TYPE(ssl_is_https) *ssl_is_https = 0;
+
+    if (!self->r) {
+        PyErr_SetString(PyExc_RuntimeError, "request object has expired");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, ":ssl_is_https"))
+        return NULL;
+
+    ssl_is_https = APR_RETRIEVE_OPTIONAL_FN(ssl_is_https);
+
+    if (ssl_is_https == 0)
+      return Py_BuildValue("i", 0);
+
+    return Py_BuildValue("i", ssl_is_https(self->r->connection));
+}
+
+static PyObject *Dispatch_ssl_var_lookup(DispatchObject *self, PyObject *args)
+{
+    APR_OPTIONAL_FN_TYPE(ssl_var_lookup) *ssl_var_lookup = 0;
+
+    PyObject *item = NULL;
+
+    char *name = 0;
+    char *value = 0;
+
+    if (!self->r) {
+        PyErr_SetString(PyExc_RuntimeError, "request object has expired");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "O:ssl_var_lookup", &item))
+        return NULL;
+
+#if PY_MAJOR_VERSION >= 3
+    if (PyUnicode_Check(item)) {
+        PyObject *latin_item;
+        latin_item = PyUnicode_AsLatin1String(item);
+        if (!latin_item) {
+            PyErr_Format(PyExc_TypeError, "byte string value expected, "
+                         "value containing non 'latin-1' characters found");
+            Py_DECREF(item);
+            return NULL;
+        }
+
+        Py_DECREF(item);
+        item = latin_item;
+    }
+#endif
+
+    if (!PyString_Check(item)) {
+        PyErr_Format(PyExc_TypeError, "byte string value expected, value "
+                     "of type %.200s found", item->ob_type->tp_name);
+        Py_DECREF(item);
+        return NULL;
+    }
+
+    name = PyString_AsString(item);
+
+    ssl_var_lookup = APR_RETRIEVE_OPTIONAL_FN(ssl_var_lookup);
+
+    if (ssl_var_lookup == 0)
+    {
+        Py_XINCREF(Py_None);
+
+        return Py_None;
+    }
+
+    value = ssl_var_lookup(self->r->pool, self->r->server,
+                           self->r->connection, self->r, name);
+
+    if (!value) {
+        Py_XINCREF(Py_None);
+
+        return Py_None;
+    }
+
+#if PY_MAJOR_VERSION >= 3
+    return PyUnicode_DecodeLatin1(value, strlen(value), NULL);
+#else
+    return PyString_FromString(value);
+#endif
+}
+
+#endif
+
+static PyMethodDef Dispatch_methods[] = {
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+    { "ssl_is_https",   (PyCFunction)Dispatch_ssl_is_https, METH_VARARGS, 0 },
+    { "ssl_var_lookup", (PyCFunction)Dispatch_ssl_var_lookup, METH_VARARGS, 0 },
+#endif
+    { NULL, NULL}
+};
 
 static PyTypeObject Dispatch_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
@@ -8406,7 +8844,7 @@ static PyTypeObject Dispatch_Type = {
     0,                      /*tp_weaklistoffset*/
     0,                      /*tp_iter*/
     0,                      /*tp_iternext*/
-    0,                      /*tp_methods*/
+    Dispatch_methods,       /*tp_methods*/
     0,                      /*tp_members*/
     0,                      /*tp_getset*/
     0,                      /*tp_base*/
@@ -9192,6 +9630,8 @@ static const command_rec wsgi_commands[] =
 #if PY_MAJOR_VERSION == 2 && PY_MINOR_VERSION >= 6
     { "WSGIPy3kWarningFlag", wsgi_set_py3k_warning_flag, NULL,
         RSRC_CONF, TAKE1, "Enable/Disable Python 3.0 warnings." },
+    { "WSGIDontWriteBytecode", wsgi_set_dont_write_bytecode, NULL,
+        RSRC_CONF, TAKE1, "Enable/Disable writing of byte code." },
 #endif
 
     { "WSGIPythonWarnings", wsgi_add_python_warnings, NULL,
@@ -9288,6 +9728,11 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
 
     const char *root = NULL;
     const char *home = NULL;
+
+    const char *lang = NULL;
+    const char *locale = NULL;
+
+    const char *python_home = NULL;
     const char *python_path = NULL;
     const char *python_eggs = NULL;
 
@@ -9308,8 +9753,15 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
     int cpu_time_limit = 0;
     int cpu_priority = 0;
 
+    apr_int64_t memory_limit = 0;
+    apr_int64_t virtual_memory_limit = 0;
+
     uid_t uid;
     uid_t gid;
+
+    const char *groups_list = NULL;
+    int groups_count = 0;
+    gid_t *groups = NULL;
 
     const char *option = NULL;
     const char *value = NULL;
@@ -9368,6 +9820,9 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
             group = value;
             gid = ap_gname2id(group);
         }
+        else if (!strcmp(option, "supplementary-groups")) {
+            groups_list = value;
+        }
         else if (!strcmp(option, "processes")) {
             if (!*value)
                 return "Invalid process count for WSGI daemon process.";
@@ -9410,6 +9865,15 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
                 return "Invalid home directory for WSGI daemon process.";
 
             home = value;
+        }
+        else if (!strcmp(option, "lang")) {
+            lang = value;
+        }
+        else if (!strcmp(option, "locale")) {
+            locale = value;
+        }
+        else if (!strcmp(option, "python-home")) {
+            python_home = value;
         }
         else if (!strcmp(option, "python-path")) {
             python_path = value;
@@ -9534,12 +9998,55 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
 
             cpu_priority = atoi(value);
         }
+        else if (!strcmp(option, "memory-limit")) {
+            if (!*value)
+                return "Invalid memory limit for WSGI daemon process.";
+
+            memory_limit = apr_atoi64(value);
+            if (memory_limit < 0)
+                return "Invalid memory limit for WSGI daemon process.";
+        }
+        else if (!strcmp(option, "virtual-memory-limit")) {
+            if (!*value)
+                return "Invalid virtual memory limit for WSGI daemon process.";
+
+            virtual_memory_limit = apr_atoi64(value);
+            if (virtual_memory_limit < 0)
+                return "Invalid virtual memory limit for WSGI daemon process.";
+        }
         else
             return "Invalid option to WSGI daemon process definition.";
     }
 
     if (script_user && script_group)
         return "Only one of script-user and script-group allowed.";
+
+    if (groups_list) {
+        const char *group_name = NULL;
+        int groups_maximum = NGROUPS_MAX;
+        const char *items = NULL;
+
+#ifdef _SC_NGROUPS_MAX
+        groups_maximum = sysconf(_SC_NGROUPS_MAX);
+        if (groups_maximum < 0)
+            groups_maximum = NGROUPS_MAX;
+#endif
+        groups = (gid_t *)apr_pcalloc(cmd->pool,
+                                      groups_maximum*sizeof(groups[0]));
+
+        groups[groups_count++] = gid;
+
+        items = groups_list;
+        group_name = ap_getword(cmd->pool, &items, ',');
+
+        while (group_name && *group_name) {
+            if (groups_count > groups_maximum)
+                return "Too many supplementary groups WSGI daemon process";
+
+            groups[groups_count++] = ap_gname2id(group_name);
+            group_name = ap_getword(cmd->pool, &items, ',');
+        }
+    }
 
     if (!wsgi_daemon_list) {
         wsgi_daemon_list = apr_array_make(cmd->pool, 20,
@@ -9571,6 +10078,10 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
     entry->uid = uid;
     entry->gid = gid;
 
+    entry->groups_list = groups_list;
+    entry->groups_count = groups_count;
+    entry->groups = groups;
+
     entry->processes = processes;
     entry->multiprocess = multiprocess;
     entry->threads = threads;
@@ -9579,6 +10090,10 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
     entry->root = root;
     entry->home = home;
 
+    entry->lang = lang;
+    entry->locale = locale;
+
+    entry->python_home = python_home;
     entry->python_path = python_path;
     entry->python_eggs = python_eggs;
 
@@ -9598,6 +10113,9 @@ static const char *wsgi_add_daemon_process(cmd_parms *cmd, void *mconfig,
 
     entry->cpu_time_limit = cpu_time_limit;
     entry->cpu_priority = cpu_priority;
+
+    entry->memory_limit = memory_limit;
+    entry->virtual_memory_limit = virtual_memory_limit;
 
     entry->listener_fd = -1;
 
@@ -9928,7 +10446,17 @@ static void wsgi_setup_access(WSGIDaemonProcess *daemon)
                      getpid(), (unsigned)daemon->group->gid);
     }
     else {
-        if (initgroups(daemon->group->user, daemon->group->gid) == -1) {
+        if (daemon->group->groups) {
+            if (setgroups(daemon->group->groups_count,
+                          daemon->group->groups) == -1) {
+                ap_log_error(APLOG_MARK, WSGI_LOG_ALERT(errno),
+                             wsgi_server, "mod_wsgi (pid=%d): Unable "
+                             "to set supplementary groups for uname=%s "
+                             "of '%s'.", getpid(), daemon->group->user,
+                             daemon->group->groups_list);
+            }
+        }
+        else if (initgroups(daemon->group->user, daemon->group->gid) == -1) {
             ap_log_error(APLOG_MARK, WSGI_LOG_ALERT(errno),
                          wsgi_server, "mod_wsgi (pid=%d): Unable "
                          "to set groups for uname=%s and gid=%u.", getpid(),
@@ -10092,6 +10620,17 @@ static void wsgi_process_socket(apr_pool_t *p, apr_socket_t *sock,
     }
     apr_sockaddr_ip_get(&c->local_ip, c->local_addr);
 
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    if ((rv = apr_socket_addr_get(&c->client_addr, APR_REMOTE, sock))
+        != APR_SUCCESS) {
+        ap_log_error(APLOG_MARK, APLOG_INFO, rv, wsgi_server,
+                     "mod_wsgi (pid=%d): Failed call "
+                     "apr_socket_addr_get(APR_REMOTE).", getpid());
+        apr_socket_close(sock);
+        return;
+    }
+    c->client_ip = "unknown";
+#else
     if ((rv = apr_socket_addr_get(&c->remote_addr, APR_REMOTE, sock))
         != APR_SUCCESS) {
         ap_log_error(APLOG_MARK, WSGI_LOG_INFO(rv), wsgi_server,
@@ -10100,7 +10639,8 @@ static void wsgi_process_socket(apr_pool_t *p, apr_socket_t *sock,
         apr_socket_close(sock);
         return;
     }
-    apr_sockaddr_ip_get(&c->remote_ip, c->remote_addr);
+    c->remote_ip = "unknown";
+#endif
 
     c->base_server = daemon->group->server;
 
@@ -10509,6 +11049,8 @@ static void *wsgi_deadlock_thread(apr_thread_t *thd, void *data)
 {
     WSGIDaemonProcess *daemon = data;
 
+    PyGILState_STATE gilstate;
+
     if (wsgi_server_config->verbose_debugging) {
         ap_log_error(APLOG_MARK, WSGI_LOG_DEBUG(0), wsgi_server,
                      "mod_wsgi (pid=%d): Enable deadlock thread in "
@@ -10523,8 +11065,8 @@ static void *wsgi_deadlock_thread(apr_thread_t *thd, void *data)
     while (1) {
         apr_sleep(apr_time_from_sec(1));
 
-        PyEval_AcquireLock();
-        PyEval_ReleaseLock();
+        gilstate = PyGILState_Ensure();
+        PyGILState_Release(gilstate);
 
         apr_thread_mutex_lock(wsgi_shutdown_lock);
         wsgi_deadlock_shutdown_time = apr_time_now();
@@ -10637,22 +11179,9 @@ static void wsgi_daemon_main(apr_pool_t *p, WSGIDaemonProcess *daemon)
     apr_int32_t poll_count = 0;
 
     /*
-     * Create pipe by which signal handler can notify the main
-     * thread that signal has arrived indicating that process
-     * needs to shutdown.
+     * Setup poll object for listening for shutdown notice from
+     * signal handler.
      */
-
-    rv = apr_file_pipe_create(&wsgi_signal_pipe_in, &wsgi_signal_pipe_out, p);
-
-    if (rv != APR_SUCCESS) {
-        ap_log_error(APLOG_MARK, WSGI_LOG_EMERG(rv), wsgi_server,
-                     "mod_wsgi (pid=%d): Couldn't initialise signal "
-                     "pipe in daemon process '%s'.", getpid(),
-                     daemon->group->name);
-        sleep(20);
-
-        return;
-    }
 
     poll_fd.desc_type = APR_POLL_FILE;
     poll_fd.reqevents = APR_POLLIN;
@@ -11009,7 +11538,17 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
          * available to code in daemon processes.
          */
 
+        /*
+         * XXX If this is closed, under Apache 2.4 then daemon
+         * mode processes will crash. Not much choice but to
+         * leave it open. Daemon mode really needs to be
+         * rewritten not to use normal Apache request object and
+         * output bucket chain to avoid potential for problems.
+         */
+
+#if 0
         ap_cleanup_scoreboard(0);
+#endif
 
         /*
          * Wipe out random value used in magic token so that not
@@ -11046,8 +11585,24 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
 
         /*
          * Register signal handler to receive shutdown signal
-         * from Apache parent process.
+         * from Apache parent process. We need to first create
+         * pipe by which signal handler can notify the main
+         * thread that signal has arrived indicating that
+         * process needs to shutdown.
          */
+
+        status = apr_file_pipe_create(&wsgi_signal_pipe_in,
+                                      &wsgi_signal_pipe_out, p);
+
+        if (status != APR_SUCCESS) {
+            ap_log_error(APLOG_MARK, WSGI_LOG_EMERG(status), wsgi_server,
+                         "mod_wsgi (pid=%d): Couldn't initialise signal "
+                         "pipe in daemon process '%s'.", getpid(),
+                         daemon->group->name);
+            sleep(20);
+
+            exit(-1);
+        }
 
         wsgi_daemon_shutdown = 0;
 
@@ -11061,17 +11616,78 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
 
         if (daemon->group->cpu_time_limit > 0) {
             struct rlimit limit;
+            int result = -1;
 
             limit.rlim_cur = daemon->group->cpu_time_limit;
 
             limit.rlim_max = daemon->group->cpu_time_limit + 1;
             limit.rlim_max += daemon->group->shutdown_timeout;
 
-            if (setrlimit(RLIMIT_CPU, &limit) == -1) {
+#if defined(RLIMIT_CPU)
+            result = setrlimit(RLIMIT_CPU, &limit);
+#endif
+
+            if (result == -1) {
                 ap_log_error(APLOG_MARK, WSGI_LOG_CRIT(0), wsgi_server,
                              "mod_wsgi (pid=%d): Couldn't set CPU time "
                              "limit of %d seconds for process '%s'.", getpid(),
                              daemon->group->cpu_time_limit,
+                             daemon->group->name);
+            }
+        }
+
+        /*
+	 * Set limits on amount of date segment memory that can
+	 * be used. Although this is done, some platforms
+	 * doesn't actually support it.
+         */
+
+        if (daemon->group->memory_limit > 0) {
+            struct rlimit limit;
+            int result = -1;
+
+            limit.rlim_cur = daemon->group->memory_limit;
+
+            limit.rlim_max = daemon->group->memory_limit;
+
+#if defined(RLIMIT_DATA)
+            result = setrlimit(RLIMIT_DATA, &limit);
+#endif
+
+            if (result == -1) {
+                ap_log_error(APLOG_MARK, WSGI_LOG_CRIT(0), wsgi_server,
+                             "mod_wsgi (pid=%d): Couldn't set memory time "
+                             "limit of %ld for process '%s'.", getpid(),
+                             (long)daemon->group->memory_limit,
+                             daemon->group->name);
+            }
+        }
+
+        /*
+         * Set limits on amount of virtual memory that can be used.
+         * Although this is done, some platforms doesn't actually
+         * support it.
+         */
+
+        if (daemon->group->virtual_memory_limit > 0) {
+            struct rlimit limit;
+            int result = -1;
+
+            limit.rlim_cur = daemon->group->virtual_memory_limit;
+
+            limit.rlim_max = daemon->group->virtual_memory_limit;
+
+#if defined(RLIMIT_AS)
+            result = setrlimit(RLIMIT_AS, &limit);
+#elif defined(RLIMIT_VMEM)
+            result = setrlimit(RLIMIT_VMEM, &limit);
+#endif
+
+            if (result == -1) {
+                ap_log_error(APLOG_MARK, WSGI_LOG_CRIT(0), wsgi_server,
+                             "mod_wsgi (pid=%d): Couldn't set virtual memory "
+                             "time limit of %ld for process '%s'.", getpid(),
+                             (long)daemon->group->virtual_memory_limit,
                              daemon->group->name);
             }
         }
@@ -11093,6 +11709,34 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
         apr_pool_create(&wsgi_daemon_pool, p);
 
         /*
+         * Retain a reference to daemon process details. Do
+         * this here as when doing lazy initialisation of
+         * the interpreter we want to know if in a daemon
+         * process so can pick any daemon process specific
+         * home directory for Python installation.
+         */
+
+        wsgi_daemon_group = daemon->group->name;
+        wsgi_daemon_process = daemon;
+
+        /* Set lang/locale if specified for daemon process. */
+
+        if (daemon->group->lang) {
+            char *envvar = apr_pstrcat(p, "LANG=", daemon->group->lang, NULL);
+            ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, wsgi_server,
+                         "mod_wsgi (pid=%d): Setting lang to %s.",
+                         getpid(), daemon->group->lang);
+            putenv(envvar);
+        }
+
+        if (daemon->group->locale) {
+            ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, wsgi_server,
+                         "mod_wsgi (pid=%d): Setting locale to %s.",
+                         getpid(), daemon->group->locale);
+            setlocale(LC_ALL, daemon->group->locale);
+        }
+
+        /*
          * Initialise Python if required to be done in the child
          * process. Note that it will not be initialised if
          * mod_python loaded and it has already been done.
@@ -11101,6 +11745,7 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
         if (wsgi_python_after_fork)
             wsgi_python_init(p);
 
+#if PY_MAJOR_VERSION < 3
         /*
          * If mod_python is also being loaded and thus it was
          * responsible for initialising Python it can leave in
@@ -11110,7 +11755,9 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
          * initialisation but in daemon process we skip the
          * mod_python child initialisation so the active thread
          * state still exists. Thus need to do a bit of a fiddle
-         * to ensure there is no active thread state.
+         * to ensure there is no active thread state. Don't need
+         * to worry about this with Python 3.X as mod_python
+         * only supports Python 2.X.
          */
 
         if (!wsgi_python_initialized) {
@@ -11126,6 +11773,7 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
 
             PyEval_ReleaseLock();
         }
+#endif
 
         /*
          * If the daemon is associated with a virtual host then
@@ -11235,11 +11883,6 @@ static int wsgi_start_process(apr_pool_t *p, WSGIDaemonProcess *daemon)
                              wsgi_server->server_hostname);
             }
         }
-
-        /* Retain a reference to daemon process details. */
-
-        wsgi_daemon_group = daemon->group->name;
-        wsgi_daemon_process = daemon;
 
         /*
          * Setup Python in the child daemon process. Note that
@@ -11530,8 +12173,8 @@ static int wsgi_connect_daemon(request_rec *r, WSGIDaemonSocket *daemon)
                 close(daemon->fd);
 
                 /*
-		 * Progressively increase time we wait between
-		 * connection attempts. Start at 0.1 second and
+                 * Progressively increase time we wait between
+                 * connection attempts. Start at 0.1 second and
                  * double each time but apply ceiling at 2.0
                  * seconds.
                  */
@@ -12063,19 +12706,23 @@ static int wsgi_execute_remote(request_rec *r)
             if ((status = ap_scan_script_header_err_brigade(r, bbin, NULL)))
                 return HTTP_INTERNAL_SERVER_ERROR;
 
-            /* Status must be zero for our special headers. */
+            /*
+             * Status must be 200 for our special headers. Ideally
+             * we would use 0 as did in the past but Apache 2.4
+             * complains if use 0 as not a valid status value.
+             */
 
-            if (r->status != 0) {
+            if (r->status != 200) {
                 ap_log_rerror(APLOG_MARK, WSGI_LOG_ERR(0), r,
                              "mod_wsgi (pid=%d): Unexpected status from "
                              "WSGI daemon process '%d'.", getpid(), r->status);
                 return HTTP_INTERNAL_SERVER_ERROR;
             }
 
-            if (!strcmp(r->status_line, "0 Continue"))
+            if (!strcmp(r->status_line, "200 Continue"))
                 break;
 
-            if (strcmp(r->status_line, "0 Rejected")) {
+            if (strcmp(r->status_line, "200 Rejected")) {
                 ap_log_rerror(APLOG_MARK, WSGI_LOG_ERR(0), r,
                              "mod_wsgi (pid=%d): Unexpected status from "
                              "WSGI daemon process '%d'.", getpid(), r->status);
@@ -12218,14 +12865,15 @@ static int wsgi_execute_remote(request_rec *r)
         return HTTP_INTERNAL_SERVER_ERROR;
 
     /*
-     * Look for special case of status being 0 and
-     * translate it into a 500 error so that error
-     * document processing will occur for those cases
-     * where WSGI application wouldn't have supplied
-     * their own error document.
+     * Look for the special case of status being 200 but the
+     * status line indicating an error and translate it into a
+     * 500 error so that error document processing will occur
+     * for those cases where WSGI application wouldn't have
+     * supplied their own error document. We used to use 0
+     * here for status but Apache 2.4 prohibits it now.
      */
 
-    if (r->status == 0)
+    if (r->status == 200 && !strcmp(r->status_line, "200 Error"))
         return HTTP_INTERNAL_SERVER_ERROR;
 
     /*
@@ -12266,6 +12914,31 @@ static int wsgi_execute_remote(request_rec *r)
         ap_internal_redirect_handler(location, r);
 
         return OK;
+    }
+
+    /*
+     * If multiple WWW-Authenticate headers they would
+     * have been merged and although this is allowed by
+     * HTTP specifications, some HTTP clients don't
+     * like that, so split them into separate headers
+     * again.
+     */
+
+    if (apr_table_get(r->err_headers_out, "WWW-Authenticate")) {
+        const char* value = NULL;
+        const char* item = NULL;
+
+        value = apr_table_get(r->err_headers_out, "WWW-Authenticate");
+
+        apr_table_unset(r->err_headers_out, "WWW-Authenticate");
+
+        while (*value) {
+            item = ap_getword(r->pool, &value, ',');
+            while (*item && apr_isspace(*item))
+                item++;
+            if (*item)
+                apr_table_add(r->err_headers_out, "WWW-Authenticate", item);
+        }
     }
 
     /*
@@ -12739,8 +13412,18 @@ static int wsgi_hook_daemon_handler(conn_rec *c)
      * file for the host.
      */
 
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    r->connection->client_ip = (char *)apr_table_get(r->subprocess_env,
+                                                     "REMOTE_ADDR");
+#else
     r->connection->remote_ip = (char *)apr_table_get(r->subprocess_env,
                                                      "REMOTE_ADDR");
+#endif
+
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    r->useragent_addr = c->client_addr;
+    r->useragent_ip = c->client_ip;
+#endif
 
     key = apr_psprintf(p, "%s|%s",
                        apr_table_get(r->subprocess_env,
@@ -12821,6 +13504,13 @@ static int wsgi_hook_daemon_handler(conn_rec *c)
     config->script_reloading = atoi(apr_table_get(r->subprocess_env,
                                                   "mod_wsgi.script_reloading"));
 
+    item = apr_table_get(r->subprocess_env, "mod_wsgi.enable_sendfile");
+
+    if (item && !strcasecmp(item, "1"))
+        config->enable_sendfile = 1;
+    else
+        config->enable_sendfile = 0;
+
     /*
      * Define how input data is to be processed. This
      * was already done in the Apache child process and
@@ -12876,7 +13566,7 @@ static int wsgi_hook_daemon_handler(conn_rec *c)
 
     if (wsgi_execute_script(r) != OK) {
         r->status = HTTP_INTERNAL_SERVER_ERROR;
-        r->status_line = "0 Error";
+        r->status_line = "200 Error";
     }
 
     /*
@@ -13259,6 +13949,18 @@ static PyObject *Auth_environ(AuthObject *self, const char *group)
         Py_DECREF(object);
     }
 
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    if (r->useragent_ip) {
+        value = r->useragent_ip;
+#if PY_MAJOR_VERSION >= 3
+        object = PyUnicode_DecodeLatin1(value, strlen(value), NULL);
+#else
+        object = PyString_FromString(value);
+#endif
+        PyDict_SetItemString(vars, "REMOTE_ADDR", object);
+        Py_DECREF(object);
+    }
+#else
     if (c->remote_ip) {
         value = c->remote_ip;
 #if PY_MAJOR_VERSION >= 3
@@ -13269,6 +13971,7 @@ static PyObject *Auth_environ(AuthObject *self, const char *group)
         PyDict_SetItemString(vars, "REMOTE_ADDR", object);
         Py_DECREF(object);
     }
+#endif
 
 #if PY_MAJOR_VERSION >= 3
     value = ap_document_root(r);
@@ -13292,6 +13995,17 @@ static PyObject *Auth_environ(AuthObject *self, const char *group)
         Py_DECREF(object);
     }
 
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    rport = c->client_addr->port;
+    value = apr_itoa(r->pool, rport);
+#if PY_MAJOR_VERSION >= 3
+    object = PyUnicode_DecodeLatin1(value, strlen(value), NULL);
+#else
+    object = PyString_FromString(value);
+#endif
+    PyDict_SetItemString(vars, "REMOTE_PORT", object);
+    Py_DECREF(object);
+#else
     rport = c->remote_addr->port;
     value = apr_itoa(r->pool, rport);
 #if PY_MAJOR_VERSION >= 3
@@ -13301,6 +14015,7 @@ static PyObject *Auth_environ(AuthObject *self, const char *group)
 #endif
     PyDict_SetItemString(vars, "REMOTE_PORT", object);
     Py_DECREF(object);
+#endif
 
     value = r->protocol;
 #if PY_MAJOR_VERSION >= 3
@@ -13372,13 +14087,131 @@ static PyObject *Auth_environ(AuthObject *self, const char *group)
      */
 
     if (!wsgi_daemon_pool && self->config->pass_apache_request) {
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 2
+        object = PyCapsule_New(self->r, 0, 0);
+#else
         object = PyCObject_FromVoidPtr(self->r, 0);
+#endif
         PyDict_SetItemString(vars, "apache.request_rec", object);
         Py_DECREF(object);
     }
 
+    /*
+     * Extensions for accessing SSL certificate information from
+     * mod_ssl when in use.
+     */
+
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+    object = PyObject_GetAttrString((PyObject *)self, "ssl_is_https");
+    PyDict_SetItemString(vars, "mod_ssl.is_https", object);
+    Py_DECREF(object);
+
+    object = PyObject_GetAttrString((PyObject *)self, "ssl_var_lookup");
+    PyDict_SetItemString(vars, "mod_ssl.var_lookup", object);
+    Py_DECREF(object);
+#endif
+
     return vars;
 }
+
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+
+static PyObject *Auth_ssl_is_https(AuthObject *self, PyObject *args)
+{
+    APR_OPTIONAL_FN_TYPE(ssl_is_https) *ssl_is_https = 0;
+
+    if (!self->r) {
+        PyErr_SetString(PyExc_RuntimeError, "request object has expired");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, ":ssl_is_https"))
+        return NULL;
+
+    ssl_is_https = APR_RETRIEVE_OPTIONAL_FN(ssl_is_https);
+
+    if (ssl_is_https == 0)
+      return Py_BuildValue("i", 0);
+
+    return Py_BuildValue("i", ssl_is_https(self->r->connection));
+}
+
+static PyObject *Auth_ssl_var_lookup(AuthObject *self, PyObject *args)
+{
+    APR_OPTIONAL_FN_TYPE(ssl_var_lookup) *ssl_var_lookup = 0;
+
+    PyObject *item = NULL;
+
+    char *name = 0;
+    char *value = 0;
+
+    if (!self->r) {
+        PyErr_SetString(PyExc_RuntimeError, "request object has expired");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "O:ssl_var_lookup", &item))
+        return NULL;
+
+#if PY_MAJOR_VERSION >= 3
+    if (PyUnicode_Check(item)) {
+        PyObject *latin_item;
+        latin_item = PyUnicode_AsLatin1String(item);
+        if (!latin_item) {
+            PyErr_Format(PyExc_TypeError, "byte string value expected, "
+                         "value containing non 'latin-1' characters found");
+            Py_DECREF(item);
+            return NULL;
+        }
+
+        Py_DECREF(item);
+        item = latin_item;
+    }
+#endif
+
+    if (!PyString_Check(item)) {
+        PyErr_Format(PyExc_TypeError, "byte string value expected, value "
+                     "of type %.200s found", item->ob_type->tp_name);
+        Py_DECREF(item);
+        return NULL;
+    }
+
+    name = PyString_AsString(item);
+
+    ssl_var_lookup = APR_RETRIEVE_OPTIONAL_FN(ssl_var_lookup);
+
+    if (ssl_var_lookup == 0)
+    {
+        Py_XINCREF(Py_None);
+
+        return Py_None;
+    }
+
+    value = ssl_var_lookup(self->r->pool, self->r->server,
+                           self->r->connection, self->r, name);
+
+    if (!value) {
+        Py_XINCREF(Py_None);
+
+        return Py_None;
+    }
+
+#if PY_MAJOR_VERSION >= 3
+    return PyUnicode_DecodeLatin1(value, strlen(value), NULL);
+#else
+    return PyString_FromString(value);
+#endif
+}
+
+#endif
+
+static PyMethodDef Auth_methods[] = {
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+    { "ssl_is_https",   (PyCFunction)Auth_ssl_is_https, METH_VARARGS, 0 },
+    { "ssl_var_lookup", (PyCFunction)Auth_ssl_var_lookup, METH_VARARGS, 0 },
+#endif
+    { NULL, NULL}
+};
 
 static PyTypeObject Auth_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
@@ -13409,7 +14242,7 @@ static PyTypeObject Auth_Type = {
     0,                      /*tp_weaklistoffset*/
     0,                      /*tp_iter*/
     0,                      /*tp_iternext*/
-    0,                      /*tp_methods*/
+    Auth_methods,           /*tp_methods*/
     0,                      /*tp_members*/
     0,                      /*tp_getset*/
     0,                      /*tp_base*/
@@ -14391,8 +15224,13 @@ static int wsgi_hook_access_checker(request_rec *r)
     host = ap_get_remote_host(r->connection, r->per_dir_config,
                               REMOTE_HOST, NULL);
 
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    if (!host)
+        host = r->useragent_ip;
+#else
     if (!host)
         host = r->connection->remote_ip;
+#endif
 
     allow = wsgi_allow_access(r, config, host);
 
@@ -14645,8 +15483,14 @@ static int wsgi_hook_check_user_id(request_rec *r)
 
 #if defined(MOD_WSGI_WITH_AUTHZ_PROVIDER)
 
+#if MOD_WSGI_WITH_AUTHZ_PROVIDER_PARSED
+static authz_status wsgi_check_authorization(request_rec *r,
+                                             const char *require_args,
+                                             const void *parsed_require_line)
+#else
 static authz_status wsgi_check_authorization(request_rec *r,
                                              const char *require_args)
+#endif
 {
     WSGIRequestConfig *config;
 
@@ -14695,6 +15539,9 @@ static authz_status wsgi_check_authorization(request_rec *r,
 static const authz_provider wsgi_authz_provider =
 {
     &wsgi_check_authorization,
+#if MOD_WSGI_WITH_AUTHZ_PROVIDER_PARSED
+    NULL,
+#endif
 };
 
 #else
@@ -14822,6 +15669,8 @@ static void wsgi_register_hooks(apr_pool_t *p)
 
     static const char * const p6[] = { "mod_python.c", NULL };
 
+    static const char * const p7[] = { "mod_ssl.c", NULL };
+
     ap_hook_post_config(wsgi_hook_init, p6, NULL, APR_HOOK_MIDDLE);
     ap_hook_child_init(wsgi_hook_child_init, p6, NULL, APR_HOOK_MIDDLE);
 
@@ -14849,7 +15698,7 @@ static void wsgi_register_hooks(apr_pool_t *p)
     ap_register_provider(p, AUTHZ_PROVIDER_GROUP, "wsgi-group",
                          AUTHZ_PROVIDER_VERSION, &wsgi_authz_provider);
 #endif
-    ap_hook_access_checker(wsgi_hook_access_checker, NULL, n5, APR_HOOK_MIDDLE);
+    ap_hook_access_checker(wsgi_hook_access_checker, p7, n5, APR_HOOK_MIDDLE);
 #endif
 }
 
@@ -14878,6 +15727,8 @@ static const command_rec wsgi_commands[] =
 #if PY_MAJOR_VERSION == 2 && PY_MINOR_VERSION >= 6
     AP_INIT_TAKE1("WSGIPy3kWarningFlag", wsgi_set_py3k_warning_flag,
         NULL, RSRC_CONF, "Enable/Disable Python 3.0 warnings."),
+    AP_INIT_TAKE1("WSGIDontWriteBytecode", wsgi_set_dont_write_bytecode,
+        NULL, RSRC_CONF, "Enable/Disable writing of byte code."),
 #endif
 
     AP_INIT_TAKE1("WSGIPythonWarnings", wsgi_add_python_warnings,
@@ -14932,6 +15783,13 @@ static const command_rec wsgi_commands[] =
         NULL, OR_FILEINFO, "Enable/Disable overriding of error pages."),
     AP_INIT_TAKE1("WSGIChunkedRequest", wsgi_set_chunked_request,
         NULL, OR_FILEINFO, "Enable/Disable support for chunked requests."),
+
+#ifndef WIN32
+#if AP_SERVER_MAJORVERSION_NUMBER >= 2
+    AP_INIT_TAKE1("WSGIEnableSendfile", wsgi_set_enable_sendfile,
+        NULL, OR_FILEINFO, "Enable/Disable support for kernel sendfile."),
+#endif
+#endif
 
 #if defined(MOD_WSGI_WITH_AAA_HANDLERS)
     AP_INIT_RAW_ARGS("WSGIAccessScript", wsgi_set_access_script,
