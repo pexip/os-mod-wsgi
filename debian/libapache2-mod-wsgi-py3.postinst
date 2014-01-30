@@ -2,16 +2,6 @@
 
 set -e
 
-apache_force_reload() {
-    if apache2ctl configtest 2>/dev/null; then
-        #invoke-rc.d apache2 force-reload || true
-        # use "restart" as a workaround for bug #558608
-        invoke-rc.d apache2 restart || true
-    else
-        echo "Your apache2 configuration is broken, please fix it and restart apache2 manually."
-    fi
-}
-
 update_symlink() {
     wsgi_py=`readlink /usr/lib/apache2/modules/mod_wsgi.so | sed 's,.*-,,'`
     py3_default=`dpkg -s python3 | grep '^Version' | sed 's,Version: \([^.]*.[^.]*\).*,\1,'`
@@ -20,19 +10,7 @@ update_symlink() {
     fi
 }
 
-if [ -z "$2" ]; then
-    update_symlink
-    if [ -e /etc/apache2/apache2.conf ]; then
-        a2enmod wsgi >/dev/null || true
-        apache_force_reload
-    fi
-else
-    #we're upgrading
-    update_symlink
-    if [ -e /etc/apache2/mods-enabled/wsgi.load ]; then
-        apache_force_reload
-    fi
-fi
+update_symlink
 
 #DEBHELPER#
 

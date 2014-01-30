@@ -4,17 +4,15 @@ Priority: optional
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
 XSBC-Pexip-Original-Uploaders: Bernd Zeimetz <bzed@debian.org>, Piotr Ożarowski <piotr@debian.org>
-Build-Depends: debhelper (>= 5), python-all-dev, python3-all-dev, apache2-threaded-dev
+Build-Depends: debhelper (>= 5), dpkg-dev (>= 1.16.1~), python-all-dev, python3-all-dev, apache2-dev (>= 2.4), dh-autoreconf
 Homepage: http://www.modwsgi.org/
-Standards-Version: 3.9.2
-Vcs-Svn: svn://svn.debian.org/python-modules/packages/mod-wsgi/trunk/
-Vcs-Browser: http://svn.debian.org/viewsvn/python-modules/packages/mod-wsgi/trunk/
-XS-Pexip-Upstream: http://archive.ubuntu.com/ubuntu/ precise
+Standards-Version: 3.9.4
+Vcs-Svn: svn://anonscm.debian.org/python-modules/packages/mod-wsgi/trunk/
+Vcs-Browser: http://anonscm.debian.org/viewvc/python-modules/packages/mod-wsgi/trunk/
 
 Package: libapache2-mod-wsgi
 Architecture: any
-Depends: apache2, apache2.2-common, ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}
-Suggests: apache2-mpm-worker | apache2-mpm-event
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}
 Provides: httpd-wsgi
 Description: Python WSGI adapter module for Apache
  The mod_wsgi adapter is an Apache module that provides a WSGI (Web Server
@@ -27,8 +25,7 @@ Description: Python WSGI adapter module for Apache
 
 Package: libapache2-mod-wsgi-py3
 Architecture: any
-Depends: apache2, apache2.2-common, ${shlibs:Depends}, ${misc:Depends}, ${python3:Depends}
-Suggests: apache2-mpm-worker | apache2-mpm-event
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python3:Depends}
 Conflicts: libapache2-mod-wsgi
 Provides: httpd-wsgi
 Description: Python 3 WSGI adapter module for Apache

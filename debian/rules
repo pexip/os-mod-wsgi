@@ -16,6 +16,13 @@ PY3MIN=$(shell echo $(PY3VERS) | awk '{print $$1}')
 PY3MAX=$(shell echo $(PY3VERS) | LANG=C awk '{print $$NF+0.1}')
 pkgdir = $(CURDIR)/debian/$(PACKAGE)$(if $(patsubst 3.%,,$(1)),,-py3)
 
+DPKG_EXPORT_BUILDFLAGS=1
+include /usr/share/dpkg/buildflags.mk
+
+autoreconf-stamp:
+	dh_autoreconf
+	touch $@
+
 build-%/config.status:
 	dh_testdir
 	mkdir -p build-$*
@@ -29,14 +36,16 @@ build-%/build-stamp: build-%/config.status
 	touch $@
 
 build: build-arch
-build-arch: $(PYVERS:%=build-%/build-stamp) $(PY3VERS:%=build-%/build-stamp)
+build-arch: autoreconf-stamp $(PYVERS:%=build-%/build-stamp) $(PY3VERS:%=build-%/build-stamp)
 build-indep:
 
 clean:
 	dh_testdir
 	dh_testroot
 	rm -rf build-*
-	dh_clean 
+	dh_autoreconf_clean
+	dh_clean
+	rm -f autoreconf-stamp
 
 install-clean:
 	dh_testdir
@@ -61,6 +70,7 @@ binary-arch: build install
 	dh_installchangelogs 
 	dh_installdocs
 	dh_install
+	dh_apache2
 	install -d -m 755 debian/$(PACKAGE)/usr/share/python/runtime.d
 	install -d -m 755 debian/$(PACKAGE)-py3/usr/share/python3/runtime.d
 	install -m 755 debian/$(PACKAGE).rtupdate debian/$(PACKAGE)/usr/share/python/runtime.d/
