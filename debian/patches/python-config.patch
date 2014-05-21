@@ -6,9 +6,9 @@ Bug-Debian: http://bugs.debian.org/692390
 
 --- a/configure.ac
 +++ b/configure.ac
-@@ -77,14 +77,8 @@
-     from distutils import sysconfig; \
-     stdout.write((sysconfig.get_config_var("VERSION")))'`
+@@ -103,14 +103,8 @@
+     PYTHON_LDVERSION=${PYTHON_VERSION}
+ fi
  
 -CPPFLAGS1=`${PYTHON} -c 'from sys import stdout; \
 -    from distutils import sysconfig; \
@@ -23,16 +23,28 @@ Bug-Debian: http://bugs.debian.org/692390
  
  if test "${ENABLE_EMBEDDED}" != "yes"; then
  CPPFLAGS3="-DMOD_WSGI_DISABLE_EMBEDDED"
-@@ -113,32 +106,8 @@
-     from distutils import sysconfig; \
-     stdout.write(sysconfig.get_config_var("PYTHONFRAMEWORK"))'`
+@@ -143,45 +137,8 @@
+     PYTHONCFGDIR="${PYTHONCFGDIR}-${PYTHON_LDVERSION}"
+ fi
  
 -if test "${PYTHONFRAMEWORKDIR}" = "no-framework" -o \
 -        "${ENABLE_FRAMEWORK}" != "yes"; then
 -    LDFLAGS1="-L${PYTHONLIBDIR}"
 -    LDFLAGS2="-L${PYTHONCFGDIR}"
 -
--    LDLIBS1="-lpython${PYTHON_VERSION}"
+-    LDLIBS1="-lpython${PYTHON_LDVERSION}"
+-
+-    # MacOS X seems to be broken and doesn't use ABIFLAGS suffix
+-    # so add a check to try and work out what we need to do.
+-
+-    if test -f "${PYTHONLIBDIR}/libpython${PYTHON_VERSION}.a"; then
+-        LDLIBS1="-lpython${PYTHON_VERSION}"
+-    fi
+-
+-    if test -f "${PYTHONCFGDIR}/libpython${PYTHON_VERSION}.a"; then
+-        LDLIBS1="-lpython${PYTHON_VERSION}"
+-    fi
+-
 -    LDLIBS2=`${PYTHON} -c 'from sys import stdout; \
 -        from distutils import sysconfig; \
 -        stdout.write(sysconfig.get_config_var("LIBS"))'`
@@ -47,7 +59,8 @@ Bug-Debian: http://bugs.debian.org/692390
 -    LDFLAGS2=`${PYTHON} -c "from sys import stdout; \
 -        from distutils import sysconfig; \
 -        stdout.write(sysconfig.get_config_var(
--        \"LINKFORSHARED\").replace(\"${STRING}\", ''))"`
+-        \"LINKFORSHARED\").replace(\"${STRING}\", ''))" | \
+-        sed -e 's/-Wl,-stack_size,[[0-9]]*//'`
 -
 -    LDLIBS1=`${PYTHON} -c 'from sys import stdout; \
 -        from distutils import sysconfig; \
@@ -58,7 +71,7 @@ Bug-Debian: http://bugs.debian.org/692390
  
  CFLAGS1=""
  for arg in ${CFLAGS}
-@@ -157,8 +125,8 @@
+@@ -200,8 +157,8 @@
  fi
  
  CFLAGS="${CFLAGS1} ${CFLAGS2}"

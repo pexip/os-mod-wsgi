@@ -1,8 +1,14 @@
-mod-wsgi (3.4-4build1) trusty; urgency=medium
+mod-wsgi (3.5-1) unstable; urgency=high
 
-  * Rebuild for python3.4 as a supported python version.
+  * New upstream release.
+    - Fixes CVE-2014-0240: Local privilege escalation when using daemon mode.
+  * Drop fix_crash_daemon_mode.patch, applied upstream.
+  * Refresh python-config.patch.
+  * Drop obsolete shlibs.local.
+  * Update watch file to check GitHub instead of Google Code.
+  * Bump Standards-Version to 3.9.5, no changes needed.
 
- -- Matthias Klose <doko@ubuntu.com>  Sat, 04 Jan 2014 18:31:23 +0000
+ -- Felix Geyer <fgeyer@debian.org>  Wed, 21 May 2014 21:45:05 +0200
 
 mod-wsgi (3.4-4) unstable; urgency=low
 
