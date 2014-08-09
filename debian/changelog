@@ -1,3 +1,12 @@
+mod-wsgi (4.2.7-1) unstable; urgency=medium
+
+  * New upstream release. 
+  * Use find instead of a simple cp to copy the source into build
+    directories.
+  * README was renamed to README.rst
+
+ -- Bernd Zeimetz <bzed@debian.org>  Sat, 09 Aug 2014 11:11:36 +0200
+
 mod-wsgi (3.5-1) unstable; urgency=high
 
   * New upstream release.
