@@ -26,7 +26,7 @@ autoreconf-stamp:
 build-%/config.status:
 	dh_testdir
 	mkdir -p build-$*
-	cp *.in *.c configure build-$*/
+	find . -mindepth 1 -maxdepth 1 -name 'debian' -o -name 'build-*' -o -exec cp -r {} build-$* \;
 	cd build-$* && ./configure --with-apxs=$(APXS2) \
 	            --with-python=/usr/bin/python$*
 
