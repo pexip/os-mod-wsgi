@@ -2,9 +2,6 @@
 
 PACKAGE=libapache2-mod-wsgi
 
-# Uncomment this to turn on verbose mode.
-#export DH_VERBOSE=1
-
 APXS2=/usr/bin/apxs2
 PYVERS=$(shell pyversions -vs)
 PYDEFAULT=$(shell pyversions -dv)
@@ -16,81 +13,46 @@ PY3MIN=$(shell echo $(PY3VERS) | awk '{print $$1}')
 PY3MAX=$(shell echo $(PY3VERS) | LANG=C awk '{print $$NF+0.1}')
 pkgdir = $(CURDIR)/debian/$(PACKAGE)$(if $(patsubst 3.%,,$(1)),,-py3)
 
-DPKG_EXPORT_BUILDFLAGS=1
-include /usr/share/dpkg/buildflags.mk
-
-autoreconf-stamp:
-	dh_autoreconf
-	touch $@
+%:
+	dh $@ --parallel --with autoreconf,apache2
 
 build-%/config.status:
-	dh_testdir
 	mkdir -p build-$*
 	find . -mindepth 1 -maxdepth 1 -name 'debian' -o -name 'build-*' -o -exec cp -r {} build-$* \;
-	cd build-$* && ./configure --with-apxs=$(APXS2) \
-	            --with-python=/usr/bin/python$*
+	dh_auto_configure -Bbuild-$* -- --with-apxs=$(APXS2) --with-python=/usr/bin/python$* 
 
-build-%/build-stamp: build-%/config.status
-	dh_testdir
-	$(MAKE) -C build-$*
+build-%/build-stamp:
+	dh_auto_build -Bbuild-$*
 	touch $@
 
-build: build-arch
-build-arch: autoreconf-stamp $(PYVERS:%=build-%/build-stamp) $(PY3VERS:%=build-%/build-stamp)
-build-indep:
-
-clean:
-	dh_testdir
-	dh_testroot
-	rm -rf build-*
-	dh_autoreconf_clean
-	dh_clean
-	rm -f autoreconf-stamp
-
-install-clean:
-	dh_testdir
-	dh_testroot
-	dh_clean -k
-	dh_installdirs
-
-install-%: build-%/build-stamp
-	$(MAKE) -C build-$* DESTDIR=$(call pkgdir,$*) install
+install-%:
+	dh_auto_install -Bbuild-$* -- DESTDIR=$(call pkgdir,$*)
 	mv $(call pkgdir,$*)/usr/lib/apache2/modules/mod_wsgi.so \
 		$(call pkgdir,$*)/usr/lib/apache2/modules/mod_wsgi.so-$*
 
-install: build install-clean $(PYVERS:%=install-%) $(PY3VERS:%=install-%)
+override_dh_auto_configure: $(PYVERS:%=build-%/config.status) $(PY3VERS:%=build-%/config.status)
 
-# Build architecture-independent files here.
-binary-indep: build install
+override_dh_auto_build: $(PYVERS:%=build-%/build-stamp) $(PY3VERS:%=build-%/build-stamp)
 
-# Build architecture-dependent files here.
-binary-arch: build install
-	dh_testdir
-	dh_testroot
-	dh_installchangelogs 
-	dh_installdocs
+override_dh_auto_install: $(PYVERS:%=install-%) $(PY3VERS:%=install-%)
+
+override_dh_auto_clean:
+	rm -rf build-*
+
+override_dh_install:
 	dh_install
-	dh_apache2
-	install -d -m 755 debian/$(PACKAGE)/usr/share/python/runtime.d
-	install -d -m 755 debian/$(PACKAGE)-py3/usr/share/python3/runtime.d
-	install -m 755 debian/$(PACKAGE).rtupdate debian/$(PACKAGE)/usr/share/python/runtime.d/
-	install -m 755 debian/$(PACKAGE)-py3.rtupdate debian/$(PACKAGE)-py3/usr/share/python3/runtime.d/
-	dh_installman
+	chmod 755 debian/$(PACKAGE)/usr/share/python/runtime.d/libapache2-mod-wsgi.rtupdate
+	chmod 755 debian/$(PACKAGE)-py3/usr/share/python3/runtime.d/libapache2-mod-wsgi-py3.rtupdate
+
+override_dh_link:
 	dh_link -p $(PACKAGE) /usr/lib/apache2/modules/mod_wsgi.so-$(PYDEFAULT) usr/lib/apache2/modules/mod_wsgi.so
 	dh_link -p $(PACKAGE)-py3 /usr/lib/apache2/modules/mod_wsgi.so-$(PY3DEFAULT) usr/lib/apache2/modules/mod_wsgi.so
-	dh_strip
-	dh_compress
-	dh_fixperms
-	dh_installdeb
-	dh_shlibdeps
+	dh_link --remaining-packages
+
+override_dh_gencontrol:
 	# Generate dependencies manually as there are no public modules
 	echo 'python:Depends=python (>= $(PYMIN)), python (<< $(PYMAX))' \
 	     >> $(CURDIR)/debian/$(PACKAGE).substvars
 	echo 'python3:Depends=python3 (>= $(PY3MIN)), python3 (<< $(PY3MAX))' \
 	     >> $(CURDIR)/debian/$(PACKAGE)-py3.substvars
 	dh_gencontrol
-	dh_md5sums
-	dh_builddeb
-
-binary: binary-indep binary-arch
-.PHONY: build clean binary-indep binary-arch binary install

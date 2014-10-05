@@ -1,3 +1,14 @@
+mod-wsgi (4.3.0-1) unstable; urgency=medium
+
+  [ Felix Geyer ]
+  * Shorten the rules file using the dh(1) helper.
+  * Add autopkgtests.
+
+  [ Bernd Zeimetz ]
+  * New upstream release.
+
+ -- Bernd Zeimetz <bzed@debian.org>  Sun, 05 Oct 2014 12:28:04 +0200
+
 mod-wsgi (4.2.7-1) unstable; urgency=medium
 
   * New upstream release. 
