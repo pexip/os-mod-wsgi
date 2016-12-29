@@ -2,17 +2,24 @@ Source: mod-wsgi
 Section: httpd
 Priority: optional
 Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
-Uploaders: Bernd Zeimetz <bzed@debian.org>, Felix Geyer <fgeyer@debian.org>
-Build-Depends: debhelper (>= 9), python-all-dev, python3-all-dev, apache2-dev (>= 2.4), dh-autoreconf
+Uploaders: Bernd Zeimetz <bzed@debian.org>,
+           Felix Geyer <fgeyer@debian.org>,
+Build-Depends: apache2-dev (>= 2.4),
+               debhelper (>= 9),
+               dh-autoreconf,
+               python-all-dev,
+               python3-all-dev,
 Homepage: http://www.modwsgi.org/
 Standards-Version: 3.9.5
-Vcs-Svn: svn://anonscm.debian.org/python-modules/packages/mod-wsgi/trunk/
-Vcs-Browser: http://anonscm.debian.org/viewvc/python-modules/packages/mod-wsgi/trunk/
+Vcs-Git: https://anonscm.debian.org/git/python-modules/packages/mod-wsgi.git
+Vcs-Browser: https://anonscm.debian.org/cgit/python-modules/packages/mod-wsgi.git
 
 Package: libapache2-mod-wsgi
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}
-Provides: httpd-wsgi
+Depends: ${misc:Depends},
+         ${python:Depends},
+         ${shlibs:Depends},
+Provides: httpd-wsgi,
 Description: Python WSGI adapter module for Apache
  The mod_wsgi adapter is an Apache module that provides a WSGI (Web Server
  Gateway Interface, a standard interface between web server software and
@@ -24,9 +31,11 @@ Description: Python WSGI adapter module for Apache
 
 Package: libapache2-mod-wsgi-py3
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python3:Depends}
-Conflicts: libapache2-mod-wsgi
-Provides: httpd-wsgi
+Depends: ${misc:Depends},
+         ${python3:Depends},
+         ${shlibs:Depends},
+Conflicts: libapache2-mod-wsgi,
+Provides: httpd-wsgi,
 Description: Python 3 WSGI adapter module for Apache
  The mod_wsgi adapter is an Apache module that provides a WSGI (Web Server
  Gateway Interface, a standard interface between web server software and

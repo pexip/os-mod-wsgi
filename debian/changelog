@@ -1,3 +1,45 @@
+mod-wsgi (4.5.11-1) unstable; urgency=medium
+
+  * [8d515a5] Merge tag 'upstream/4.5.11'
+    Upstream version 4.5.11
+
+ -- Bernd Zeimetz <bzed@debian.org>  Thu, 29 Dec 2016 21:45:11 +0100
+
+mod-wsgi (4.5.9-1) unstable; urgency=medium
+
+  * [ac3148d] Merge tag 'upstream/4.5.9'
+    Upstream version 4.5.9
+
+ -- Bernd Zeimetz <bzed@debian.org>  Sat, 03 Dec 2016 19:29:05 +0100
+
+mod-wsgi (4.5.7-1) unstable; urgency=medium
+
+  [ SVN-Git Migration ]
+  * [ebb4318] Initialize git-dpm
+  * [2794e79] git-dpm config
+  * [94c1950] Update Vcs fields for git migration
+
+  [ Bernd Zeimetz ]
+  * [4b3b7b8] Merge tag 'upstream/4.4.21'
+    Upstream version 4.4.21
+  * [8c2e3d6] Merge remote-tracking branch 'origin/master'
+  * [8013cf8] Merge tag 'upstream/4.5.7'
+    Upstream version 4.5.7
+    Closes: #791617
+  * [1d01c26] Removing patches.
+  * [a148e62] snapshot changelog.
+  * [cffb965] remove changes in configure.ac
+
+ -- Bernd Zeimetz <bzed@debian.org>  Sun, 25 Sep 2016 12:23:03 +0200
+
+mod-wsgi (4.4.13-0.1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+  * Ran wrap-and-sort -t -a.
+
+ -- Thomas Goirand <zigo@debian.org>  Tue, 15 Sep 2015 13:29:03 +0000
+
 mod-wsgi (4.3.0-1) unstable; urgency=medium
 
   [ Felix Geyer ]
