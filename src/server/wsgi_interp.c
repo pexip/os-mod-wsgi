@@ -907,29 +907,30 @@ InterpreterObject *newInterpreterObject(const char *name)
 
     /*
      * If running in daemon mode and a home directory was set then
-     * insert an empty string at the start of the Python module search
-     * path so the current working directory will be searched. This
-     * makes things similar to when using the Python interpreter on the
-     * command line. If the current working directory changes then where
-     * it looks follows, so doesn't always look in home.
+     * insert the home directory at the start of the Python module
+     * search path. This makes things similar to when using the Python
+     * interpreter on the command line with a script.
      */
 
 #if defined(MOD_WSGI_WITH_DAEMONS)
     if (wsgi_daemon_process && wsgi_daemon_process->group->home) {
         PyObject *path = NULL;
+        const char *home = wsgi_daemon_process->group->home;
 
         path = PySys_GetObject("path");
 
         if (module && path) {
-            PyObject *empty;
+            PyObject *item;
 
 #if PY_MAJOR_VERSION >= 3
-            empty = PyUnicode_DecodeLatin1("", strlen(""), NULL);
+            item = PyUnicode_Decode(home, strlen(home),
+                                    Py_FileSystemDefaultEncoding,
+                                    "surrogateescape");
 #else
-            empty = PyString_FromString("");
+            item = PyString_FromString(home);
 #endif
-            PyList_Insert(path, 0, empty);
-            Py_DECREF(empty);
+            PyList_Insert(path, 0, item);
+            Py_DECREF(item);
         }
 
         Py_XDECREF(module);
@@ -1348,10 +1349,13 @@ InterpreterObject *newInterpreterObject(const char *name)
 static void Interpreter_dealloc(InterpreterObject *self)
 {
     PyThreadState *tstate = NULL;
-    PyObject *exitfunc = NULL;
     PyObject *module = NULL;
 
     PyThreadState *tstate_enter = NULL;
+
+#if PY_MAJOR_VERSION < 3 || (PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION < 4)
+    PyObject *exitfunc = NULL;
+#endif
 
     /*
      * We should always enter here with the Python GIL
@@ -1986,7 +1990,16 @@ void wsgi_python_init(apr_pool_t *p)
             }
         }
 
-        /* Check for Python HOME being overridden. */
+#if defined(WIN32)
+        /*
+         * Check for Python HOME being overridden. This is only being
+         * used on Windows for now. For UNIX systems we actually do
+         * a fiddle and work out where the Python executable would be
+         * and set its location instead. This is to get around some
+         * brokeness in pyvenv in Python 3.X. We don't know if that
+         * workaround works for Windows yet, but since not supporting
+         * Windows for mod_wsgi 4.X as yet, doesn't matter.
+         */
 
         python_home = wsgi_server_config->python_home;
 
@@ -2021,6 +2034,59 @@ void wsgi_python_init(apr_pool_t *p)
 
             Py_SetPythonHome((char *)python_home);
         }
+#endif
+#else
+        /*
+         * Check for Python HOME being overridden. What we are actually
+         * going to do though is work out where the Python executable
+         * would be that the designated installation and set the
+         * location for where it is. This avoids bugs in pyvenv support
+         * for embedded systems.
+         */
+
+        python_home = wsgi_server_config->python_home;
+
+#if defined(MOD_WSGI_WITH_DAEMONS)
+        if (wsgi_daemon_process && wsgi_daemon_process->group->python_home)
+            python_home = wsgi_daemon_process->group->python_home;
+#endif
+
+#if PY_MAJOR_VERSION >= 3
+        if (python_home) {
+            const char *python_exe = 0;
+            wchar_t *s = NULL;
+            int len = 0;
+
+            python_exe = apr_pstrcat(p, python_home, "/bin/python", NULL);
+
+            len = strlen(python_exe)+1;
+
+            ap_log_error(APLOG_MARK, APLOG_INFO, 0, wsgi_server,
+                         "mod_wsgi (pid=%d): Python home %s.", getpid(),
+                         python_home);
+
+            s = (wchar_t *)apr_palloc(p, len*sizeof(wchar_t));
+
+#if defined(WIN32) && defined(APR_HAS_UNICODE_FS)
+            wsgi_utf8_to_unicode_path(s, len, python_exe);
+#else
+            mbstowcs(s, python_exe, len);
+#endif
+            Py_SetProgramName(s);
+        }
+#else
+        if (python_home) {
+            const char *python_exe = 0;
+
+            python_exe = apr_pstrcat(p, python_home, "/bin/python", NULL);
+
+            ap_log_error(APLOG_MARK, APLOG_INFO, 0, wsgi_server,
+                         "mod_wsgi (pid=%d): Python home %s.", getpid(),
+                         python_home);
+
+            Py_SetProgramName((char *)python_exe);
+        }
+#endif
 #endif
 
         /*
