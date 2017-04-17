@@ -1,0 +1,40 @@
+#!/bin/sh
+
+set -e
+
+cat > /etc/apache2/conf-enabled/wsgi-embedded-py2.conf <<EOT
+WSGIScriptAlias /wsgi-embedded-py2/ /var/www/hello.wsgi
+EOT
+
+cat > /var/www/hello.wsgi <<EOT
+def application(environ, start_response):
+    status = '200 OK'
+    output = b'Hello World'
+
+    response_headers = [('Content-type', 'text/plain'),
+                        ('Content-Length', str(len(output)))]
+    start_response(status, response_headers)
+
+    return [output]
+EOT
+
+chown www-data:www-data /var/www/hello.wsgi
+
+a2enmod wsgi
+service apache2 reload
+
+if ! output=`wget -O- http://localhost/wsgi-embedded-py2/ 2>/dev/null`; then
+  echo "wget failed, output was:"
+  echo "$output"
+  echo
+  echo "Retest:"
+  wget -O- http://localhost/wsgi-embedded-py2/
+  exit 1
+else
+  if [ "$output" != "Hello World" ]; then
+    echo "output is wrong"
+    echo "got:      | $output |"
+    echo "expected: | Hello World |"
+    exit 1
+  fi
+fi

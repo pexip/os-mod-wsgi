@@ -1,3 +1,20 @@
+mod-wsgi (4.3.0-1pexip1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- John-Mark Bell <jmb@pexip.com>  Mon, 17 Apr 2017 03:52:26 +0100
+
+mod-wsgi (4.3.0-1) unstable; urgency=medium
+
+  [ Felix Geyer ]
+  * Shorten the rules file using the dh(1) helper.
+  * Add autopkgtests.
+
+  [ Bernd Zeimetz ]
+  * New upstream release.
+
+ -- Bernd Zeimetz <bzed@debian.org>  Sun, 05 Oct 2014 12:28:04 +0200
+
 mod-wsgi (4.2.7-1pexip1) unstable; urgency=low
 
   * New upstream release.

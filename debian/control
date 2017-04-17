@@ -3,8 +3,8 @@ Section: httpd
 Priority: optional
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
-XSBC-Pexip-Original-Uploaders: Bernd Zeimetz <bzed@debian.org>, Piotr Ożarowski <piotr@debian.org>
-Build-Depends: debhelper (>= 5), dpkg-dev (>= 1.16.1~), python-all-dev, python3-all-dev, apache2-dev (>= 2.4), dh-autoreconf
+XSBC-Pexip-Original-Uploaders: Bernd Zeimetz <bzed@debian.org>, Felix Geyer <fgeyer@debian.org>
+Build-Depends: debhelper (>= 9), python-all-dev, python3-all-dev, apache2-dev (>= 2.4), dh-autoreconf
 Homepage: http://www.modwsgi.org/
 Standards-Version: 3.9.5
 Vcs-Svn: svn://anonscm.debian.org/python-modules/packages/mod-wsgi/trunk/
