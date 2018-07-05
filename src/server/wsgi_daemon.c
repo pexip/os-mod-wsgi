@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * Copyright 2007-2014 GRAHAM DUMPLETON
+ * Copyright 2007-2016 GRAHAM DUMPLETON
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@
 
 /* ------------------------------------------------------------------------- */
 
+#if defined(MOD_WSGI_WITH_DAEMONS)
+
 int wsgi_daemon_count = 0;
 apr_hash_t *wsgi_daemon_index = NULL;
 apr_hash_t *wsgi_daemon_listeners = NULL;
@@ -33,6 +35,8 @@ int volatile wsgi_request_count = 0;
 WSGIDaemonThread *wsgi_worker_threads = NULL;
 
 WSGIThreadStack *wsgi_worker_stack = NULL;
+
+#endif
 
 /* ------------------------------------------------------------------------- */
 

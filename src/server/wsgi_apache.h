@@ -4,7 +4,7 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * Copyright 2007-2014 GRAHAM DUMPLETON
+ * Copyright 2007-2016 GRAHAM DUMPLETON
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,10 @@
 /* ------------------------------------------------------------------------- */
 
 #define CORE_PRIVATE 1
+
+#if defined(_WIN32)
+#include <ws2tcpip.h>
+#endif
 
 #include "httpd.h"
 
