@@ -4,7 +4,7 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * Copyright 2007-2014 GRAHAM DUMPLETON
+ * Copyright 2007-2016 GRAHAM DUMPLETON
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,8 +48,11 @@
 #include "http_connection.h"
 #include "apr_poll.h"
 #include "apr_signal.h"
-#include "apr_support.h"
 #include "http_vhost.h"
+
+#if APR_MAJOR_VERSION < 2
+#include "apr_support.h"
+#endif
 
 #if APR_MAJOR_VERSION < 1
 #define apr_atomic_cas32 apr_atomic_cas
@@ -106,18 +109,22 @@ typedef struct {
     int stack_size;
     int maximum_requests;
     int shutdown_timeout;
+    apr_time_t startup_timeout;
     apr_time_t deadlock_timeout;
     apr_time_t inactivity_timeout;
     apr_time_t request_timeout;
     apr_time_t graceful_timeout;
+    apr_time_t eviction_timeout;
     apr_time_t connect_timeout;
     apr_time_t socket_timeout;
     apr_time_t queue_timeout;
+    const char *socket_user;
     int listen_backlog;
     const char *display_name;
     int send_buffer_size;
     int recv_buffer_size;
     int header_buffer_size;
+    int response_buffer_size;
     const char *script_user;
     const char *script_group;
     int cpu_time_limit;
