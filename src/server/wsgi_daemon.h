@@ -4,7 +4,7 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * Copyright 2007-2016 GRAHAM DUMPLETON
+ * Copyright 2007-2018 GRAHAM DUMPLETON
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -115,6 +115,7 @@ typedef struct {
     apr_time_t request_timeout;
     apr_time_t graceful_timeout;
     apr_time_t eviction_timeout;
+    apr_time_t restart_interval;
     apr_time_t connect_timeout;
     apr_time_t socket_timeout;
     apr_time_t queue_timeout;
@@ -125,6 +126,7 @@ typedef struct {
     int recv_buffer_size;
     int header_buffer_size;
     int response_buffer_size;
+    apr_time_t response_socket_timeout;
     const char *script_user;
     const char *script_group;
     int cpu_time_limit;
@@ -132,6 +134,7 @@ typedef struct {
     rlim_t memory_limit;
     rlim_t virtual_memory_limit;
     const char *socket_path;
+    int socket_rotation;
     int listener_fd;
     const char* mutex_path;
     apr_proc_mutex_t* mutex;
@@ -182,6 +185,8 @@ extern int volatile wsgi_request_count;
 extern WSGIDaemonThread *wsgi_worker_threads;
 
 extern WSGIThreadStack *wsgi_worker_stack;
+
+extern int volatile wsgi_daemon_shutdown;
 
 #endif
 

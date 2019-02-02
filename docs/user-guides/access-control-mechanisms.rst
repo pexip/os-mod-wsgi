@@ -95,13 +95,16 @@ is 'get_realm_hash()'. The result of the function must be 'None' if the
 user doesn't exist, or a hash string encoding the user name, authentication
 realm and password::
 
-    import md5
+    import hashlib
 
     def get_realm_hash(environ, user, realm):
         if user == 'spy':
-            value = md5.new()
+            value = hashlib.md5()
             # user:realm:password
-            value.update('%s:%s:%s' % (user, realm, 'secret'))
+            input = '%s:%s:%s' % (user, realm, 'secret')
+            if not isinstance(input, bytes):
+                input = input.encode('UTF-8')
+            value.update(input)
             hash = value.hexdigest()
             return hash
         return None
@@ -123,7 +126,7 @@ only one small part of them. This will result in a lot of memory being used
 in the Apache child processes just to support the auth provider.
 
 If mod_authn_alias is being loaded into Apache, then an aliased auth
-%rovider can also be defined::
+provider can also be defined::
 
     <AuthnProviderAlias wsgi django>
     WSGIAuthUserScript /usr/local/django/mysite/apache/auth.wsgi \
@@ -133,8 +136,13 @@ If mod_authn_alias is being loaded into Apache, then an aliased auth
     WSGIScriptAlias / /usr/local/django/mysite/apache/django.wsgi
 
     <Directory /usr/local/django/mysite/apache>
-    Order deny,allow
-    Allow from all
+    <IfVersion < 2.4>
+	Order allow,deny
+	Allow from all
+    </IfVersion>
+    <IfVersion >= 2.4>
+	Require all granted
+    </IfVersion>
 
     WSGIApplicationGroup django
 
@@ -217,7 +225,7 @@ configuration would be used::
     AuthBasicProvider dbm
     AuthDBMUserFile /usr/local/wsgi/accounts.dbm
     WSGIAuthGroupScript /usr/local/wsgi/scripts/auth.wsgi
-    Require group secret-agents
+    Require wsgi-group secret-agents
     Require valid-user
 
 The 'auth.wsgi' script would then need to contain a 'groups_for_user()'

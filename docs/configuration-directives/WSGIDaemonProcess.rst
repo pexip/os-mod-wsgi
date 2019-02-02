@@ -59,6 +59,20 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
     where your code is I/O bound. If you code is CPU bound, you are better
     of using at most 3 to 5 threads per process and using more processes.
 
+    If you set the number of threads to 0 you will enable a special mode
+    intended for using a daemon process to run a managed set of processes.
+    You will need to use ``WSGIImportScript`` to pre-load a Python script
+    into the main application group specified by ``%{GLOBAL}`` where the
+    script runs a never ending task, or does an exec to run an external
+    program. If the script or external program exits, the process is
+    shutdown and replaced with a new one. For the case of using a Python
+    script to run a never ending task, a ``SystemExit`` exception will be
+    injected when a signal is received to shutdown the process. You can
+    use ``signal.signal()`` to register a signal handler for ``SIGTERM``
+    if needing to run special actions before then exiting the process using
+    ``sys.exit()``, or to signal your own threads to exit any processing
+    so you can shutdown in an orderly manner.
+
 **display-name=value**
     Defines a different name to show for the daemon process when using the
     ``ps`` command to list processes. If the value is ``%{GROUP}`` then the
@@ -226,6 +240,27 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
     Note that the directory specified must exist and be writable by the
     user that the daemon process run as.
 
+**restart-interval=nnn**
+    Defines a time limit on how long a daemon process should run before
+    being restarted.
+
+    This might be use to periodically force restart the WSGI application
+    processes when you have issues related to Python object reference count
+    cycles, or incorrect use of in memory caching, which causes constant
+    memory growth.
+
+    If this option is not defined, or is defined to be 0, then the daemon
+    process will be persistent and will continue to service requests until
+    Apache itself is restarted or shutdown.
+
+    Avoid setting this too low. This is because the constant restarting and
+    reloading of your WSGI application may cause unecessary load on your
+    system and affect performance.
+
+    You can use the ``graceful-timeout`` option in conjunction with this
+    option to reduce the chances that an active request will be interrupted
+    when a restart occurs due to the use of this option.
+
 **maximum-requests=nnn**
     Defines a limit on the number of requests a daemon process should
     process before it is shutdown and restarted.
@@ -245,6 +280,10 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
     affect performance. Only use this option if you have no other choice
     due to a memory usage issue. Stop using it as soon as any memory issue
     has been resolved.
+
+    You can use the ``graceful-timeout`` option in conjunction with this
+    option to reduce the chances that an active request will be interrupted
+    when a restart occurs due to the use of this option.
 
 **inactivity-timeout=sss**
     Defines the maximum number of seconds allowed to pass before the
@@ -302,7 +341,7 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
     the Python GIL has been detected. The default is 300 seconds.
 
     This option exists to combat the problem of a daemon process freezing
-    as the result of a rouge Python C extension module which doesn't
+    as the result of a rogue Python C extension module which doesn't
     properly release the Python GIL when entering into a blocking or long
     running operation.
 
@@ -321,12 +360,13 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
 
 **graceful-timeout=sss**
     When ``maximum-requests`` is used and the maximum has been reached,
-    or ``cpu-time-limit`` is used and the CPU limit reached, if
+    or ``cpu-time-limit`` is used and the CPU limit reached, or
+    ``restart-interval`` is used and the time limit reached, if
     ``graceful-timeout`` is set, then the process will continue to run for
     the number of second specified by this option, while still accepting
     new requests, to see if the process reaches an idle state. If the
-    process reaches an idle state, it will then be resarted immediately.
-    If the process doesn't reach an idle state and the graceful restart
+    process reaches an idle state, it will then be resarted immediately. If
+    the process doesn't reach an idle state and the graceful restart
     timeout expires, the process will be restarted, even if it means that
     requests may be interrupted.
 
@@ -493,6 +533,13 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
     increasing this to provide extra buffering of responses as it
     contributes to the runtime memory size of the Apache child processes.
 
+**response-socket-timeout=nnn**
+    Defines the maximum number of seconds allowed to pass before timing out
+    on a write operation back to the HTTP client when the response buffer
+    has filled and data is being forcibly flushed. Defaults to 0 seconds
+    indicating that it will default to the value of the ``socket-timeout``
+    option.
+
 To delegate a particular WSGI application to run in a named set of daemon
 processes, the ``WSGIProcessGroup`` directive should be specified in
 appropriate context for that application, or the ``process-group`` option
@@ -564,6 +611,37 @@ host, the following could be used::
 
   ...
   </VirtualHost>
+
+For historical reasons and the inability to change existing behaviour when
+adding or changing features, many of the options to ``WSGIDaemonProcess``,
+especially those related to timeouts are not enabled by default. It is
+strongly recommended you explicitly set these options yourself as this will
+give you a system which is better able to recover from backlogging due to
+overloading when you have too many long running requests or hanging
+requests. As a starting point you can see what ``mod_wsgi-express`` uses as
+defaults, adjusting them as necessary to suit your specific application
+after you research what each option does. For example, consider starting
+out with:
+
+* ``display-name='%{GROUP}'``
+
+* ``lang='en_US.UTF-8'``
+* ``locale='en_US.UTF-8'``
+
+* ``threads=5``
+
+* ``queue-timeout=45``
+* ``socket-timeout=60``
+* ``connect-timeout=15``
+* ``request-timeout=60``
+* ``inactivity-timeout=0``
+* ``startup-timeout=15``
+* ``deadlock-timeout=60``
+* ``graceful-timeout=15``
+* ``eviction-timeout=0``
+* ``restart-interval=0``
+* ``shutdown-timeout=5``
+* ``maximum-requests=0``
 
 Note that the ``WSGIDaemonProcess`` directive and corresponding features are
 not available on Windows.
