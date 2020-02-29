@@ -1,3 +1,37 @@
+mod-wsgi (4.6.5-1) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * [1156399] d/control: Set Vcs-* to salsa.debian.org
+  * [8d40d79] d/changelog: Remove trailing whitespaces
+  * [884363a] d/rules: Remove trailing whitespaces
+  * [dd1e447] Convert git repository from git-dpm to gbp layout
+
+  [ Chris Lamb ]
+  * [198441f] Remove trailing whitespaces.
+
+  [ Bernd Zeimetz ]
+  * [edb69c7] Removing manually generated changelog
+  * [acfabb5] Update upstream source from tag 'upstream/4.6.5'
+    Update to upstream version '4.6.5'
+    with Debian dir 154521a9e9f32e6ed349daeda7f53e913cd70e3c
+  * [d76c822] Add debian/.gitlab-ci.yml
+
+ -- Bernd Zeimetz <bzed@debian.org>  Sun, 03 Feb 2019 00:30:51 +0100
+
+mod-wsgi (4.5.17-1) unstable; urgency=medium
+
+  [ Felix Geyer ]
+  * [0e844af] Remove myself from Uploaders.
+
+  [ Scott Kitterman ]
+  * [8a3cee5] * Fix min/max Python 3 version determination for multiple versions.   (closes: #866575)
+
+  [ Bernd Zeimetz ]
+  * [f2fada2] Merge tag 'upstream/4.5.17'
+    Upstream version 4.5.17
+
+ -- Bernd Zeimetz <bzed@debian.org>  Sun, 09 Jul 2017 13:46:03 +0200
+
 mod-wsgi (4.5.11-1pexip1) pexip; urgency=medium
 
   * Migrate to Stretch
@@ -71,7 +105,7 @@ mod-wsgi (4.2.7-1pexip1) unstable; urgency=low
 
 mod-wsgi (4.2.7-1) unstable; urgency=medium
 
-  * New upstream release. 
+  * New upstream release.
   * Use find instead of a simple cp to copy the source into build
     directories.
   * README was renamed to README.rst
@@ -144,8 +178,8 @@ mod-wsgi (3.4-1) experimental; urgency=low
 mod-wsgi (3.3-4) unstable; urgency=low
 
   [ James Page ]
-  * Add a patch for Python 3.2 compatibility 
-    - debian/patches/python-3.2-compat.patch: full patch to support 
+  * Add a patch for Python 3.2 compatibility
+    - debian/patches/python-3.2-compat.patch: full patch to support
       python >= 3.2 from Graham Dumpleton.
   * Converted to source/format "3.0 (quilt)"
 
@@ -157,7 +191,7 @@ mod-wsgi (3.3-4) unstable; urgency=low
 
 mod-wsgi (3.3-2) unstable; urgency=low
 
-  * Rebuild for Python 2.6.6 (Closes: #597915) 
+  * Rebuild for Python 2.6.6 (Closes: #597915)
 
  -- Piotr Ożarowski <piotr@debian.org>  Sun, 26 Sep 2010 22:45:52 +0200
 
@@ -183,7 +217,7 @@ mod-wsgi (3.3-1) unstable; urgency=low
 mod-wsgi (3.2-2) unstable; urgency=low
 
   * mod-wsgi needs to depend on libpython for Python > 2.5.
-    (Closes: #580425) 
+    (Closes: #580425)
 
  -- Bernd Zeimetz <bzed@debian.org>  Wed, 12 May 2010 18:12:36 +0200
 
@@ -207,7 +241,7 @@ mod-wsgi (2.8-2) unstable; urgency=low
 mod-wsgi (3.1-1) experimental; urgency=low
 
   * New upstream release.
-  * Update wsgi.conf example. 
+  * Update wsgi.conf example.
 
  -- Bernd Zeimetz <bzed@debian.org>  Sat, 19 Dec 2009 12:59:50 +0100
 
@@ -239,7 +273,7 @@ mod-wsgi (2.5-1~lenny1) stable; urgency=medium
 mod-wsgi (2.5-1) unstable; urgency=low
 
   * New upstream bugfix release.
-  * Updating patches to suit the new version. 
+  * Updating patches to suit the new version.
 
  -- Bernd Zeimetz <bzed@debian.org>  Sun, 17 May 2009 01:17:56 +0200
 
@@ -264,7 +298,7 @@ mod-wsgi (2.3-1) unstable; urgency=low
     of one function from 3.0 which allows the setting of process names on *BSD
     - this does not affect Linux.
     mod-wsgi 2.3 fixes regressions which were introduced in 2.2.
-    
+
     Here follows a list of the bugfixes in 2.2:
       1. Fix bug whereby if mod_python is loaded at same time as mod_wsgi the
          WSGIImportScript directive can cause Apache child processes to crash.
@@ -272,13 +306,13 @@ mod-wsgi (2.3-1) unstable; urgency=low
 
       2. Fix bug where mod_wsgi daemon process startup could fail due to old
          stale UNIX listener socket file as described in:
-         http://code.google.com/p/modwsgi/issues/detail?id=77 
+         http://code.google.com/p/modwsgi/issues/detail?id=77
 
       3. Fix bug where listener socket file descriptors for daemon processes
          were being leaked in Apache parent process on a graceful restart.
          Also fixes problem where UNIX listener socket was left in filesystem
          on both graceful restart and graceful shutdown. For details see:
-         http://code.google.com/p/modwsgi/issues/detail?id=95 
+         http://code.google.com/p/modwsgi/issues/detail?id=95
 
       4. Fix bug where response was truncated when a null character appeared
          as first character in block of data being returned from
@@ -518,4 +552,3 @@ mod-wsgi (1.0~c1-1) unstable; urgency=low
   * Initial release (Closes: #415332)
 
  -- Bernd Zeimetz <bernd@bzed.de>  Mon, 30 Jul 2007 16:22:40 +0200
-

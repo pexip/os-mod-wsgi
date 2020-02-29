@@ -1,6 +1,8 @@
 import os
 import sys
 import inspect
+import signal
+import subprocess
 
 from django.core.management.base import BaseCommand
 
@@ -73,32 +75,56 @@ class Command(BaseCommand):
 
         __import__(module_name)
 
-        script_file = inspect.getsourcefile(sys.modules[module_name])
+        # script_file = inspect.getsourcefile(sys.modules[module_name])
+        # args = [script_file]
 
-        args = [script_file]
+        options['application_type'] = 'module'
         options['callable_object'] = callable_object
 
-        # If there is no BASE_DIR in Django settings, assume that
-        # the current working directory is the parent directory of
-        # the directory the settings module is in.
+        args = [module_name]
 
-        if hasattr(settings, 'BASE_DIR'):
-            options['working_directory'] = settings.BASE_DIR
-        else:
-            settings_module_path = os.environ['DJANGO_SETTINGS_MODULE']
-            root_module_path = settings_module_path.split('.')[0]
-            root_module = sys.modules[root_module_path]
-            parent = os.path.dirname(os.path.dirname(root_module.__file__))
-            options['working_directory'] = parent
+        # If there is no BASE_DIR in Django settings, assume that the
+        # current working directory is the parent directory of the
+        # directory the settings module is in. Either way, allow the
+        # --working-directory option to override it to deal with where
+        # meaning of BASE_DIR in the Django settings was changed.
+
+        if options.get('working_directory') is None:
+            if hasattr(settings, 'BASE_DIR'):
+                options['working_directory'] = settings.BASE_DIR
+            else:
+                settings_module_path = os.environ['DJANGO_SETTINGS_MODULE']
+                root_module_path = settings_module_path.split('.')[0]
+                root_module = sys.modules[root_module_path]
+                parent = os.path.dirname(os.path.dirname(root_module.__file__))
+                options['working_directory'] = parent
 
         url_aliases = options.setdefault('url_aliases') or []
 
         try:
-            if settings.STATIC_URL and settings.STATIC_URL.startswith('/'):
-                if settings.STATIC_ROOT:
-                    url_aliases.insert(0,
-                            (settings.STATIC_URL.rstrip('/') or '/',
-                            settings.STATIC_ROOT))
+            middleware = getattr(settings, 'MIDDLEWARE', None)
+
+            if middleware is None:
+                middleware = getattr(settings, 'MIDDLEWARE_CLASSES', [])
+
+            if 'whitenoise.middleware.WhiteNoiseMiddleware' not in middleware: 
+                if settings.STATIC_URL and settings.STATIC_URL.startswith('/'):
+                    if settings.STATIC_ROOT:
+                        # We need a fiddle here as depending on the Python
+                        # version used, the list of URL aliases we are
+                        # passed could be either list of tuples or list of
+                        # lists. We need to ensure we use the same type so
+                        # that sorting of items in the lists works later.
+
+                        if not url_aliases:
+                            url_aliases.insert(0, (
+                                    settings.STATIC_URL.rstrip('/') or '/',
+                                    settings.STATIC_ROOT))
+                        else:
+                            url_aliases.insert(0, type(url_aliases[0])((
+                                    settings.STATIC_URL.rstrip('/') or '/',
+                                    settings.STATIC_ROOT)))
+
         except AttributeError:
             pass
 
@@ -112,4 +138,28 @@ class Command(BaseCommand):
 
         executable = os.path.join(options['server_root'], 'apachectl')
         name = executable.ljust(len(options['process_name']))
-        os.execl(executable, name, 'start', '-DFOREGROUND')
+
+        if options['isatty'] and sys.stdout.isatty():
+            process = None
+
+            def handler(signum, frame):
+                if process is None:
+                    sys.exit(1)
+
+                else:
+                    if signum not in [signal.SIGWINCH]:
+                        os.kill(process.pid, signum)
+
+            signal.signal(signal.SIGINT, handler)
+            signal.signal(signal.SIGTERM, handler)
+            signal.signal(signal.SIGHUP, handler)
+            signal.signal(signal.SIGUSR1, handler)
+            signal.signal(signal.SIGWINCH, handler)
+
+            process = subprocess.Popen([executable, 'start', '-DFOREGROUND'],
+                    preexec_fn=os.setpgrp)
+
+            process.wait()
+
+        else:
+            os.execl(executable, name, 'start', '-DFOREGROUND')

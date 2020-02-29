@@ -133,17 +133,35 @@ elif not os.path.isabs(APXS):
 
 WITHOUT_APXS = False
 WITH_WINDOWS_APACHE = None
+WITH_MACOSX_APACHE = None
 
 if not WITH_TARBALL_PACKAGE:
     if not os.path.isabs(APXS) or not os.access(APXS, os.X_OK):
         WITHOUT_APXS = True
 
 if WITHOUT_APXS and os.name == 'nt':
-    APACHE_ROOTDIR = os.environ.get('MOD_WSGI_APACHE_ROOTDIR', 'c:\\Apache24')
-    if os.path.exists(APACHE_ROOTDIR):
-        WITH_WINDOWS_APACHE = APACHE_ROOTDIR
+    APACHE_ROOTDIR = os.environ.get('MOD_WSGI_APACHE_ROOTDIR')
+    if APACHE_ROOTDIR:
+        if os.path.exists(APACHE_ROOTDIR):
+            WITH_WINDOWS_APACHE = APACHE_ROOTDIR
+        else:
+            raise RuntimeError('The Apache directory %r does not exist.' %
+                    APACHE_ROOTDIR)
+    else:
+        if os.path.exists('c:\\Apache24'):
+            WITH_WINDOWS_APACHE = 'c:\\Apache24'
+        elif os.path.exists('c:\\Apache22'):
+            WITH_WINDOWS_APACHE = 'c:\\Apache22'
+        elif os.path.exists('c:\\Apache2'):
+            WITH_WINDOWS_APACHE = 'c:\\Apache2'
+        else:
+            raise RuntimeError('No Apache installation can be found. Set the '
+                    'MOD_WSGI_APACHE_ROOTDIR environment to its location.')
 
-if WITHOUT_APXS and not WITH_WINDOWS_APACHE:
+elif WITHOUT_APXS and sys.platform == 'darwin':
+    WITH_MACOSX_APACHE = '/Applications/Xcode.app'
+
+if WITHOUT_APXS and not WITH_WINDOWS_APACHE and not WITH_MACOSX_APACHE:
     raise RuntimeError('The %r command appears not to be installed or '
             'is not executable. Please check the list of prerequisites '
             'in the documentation for this package and install any '
@@ -155,6 +173,27 @@ if WITH_WINDOWS_APACHE:
             return WITH_WINDOWS_APACHE + '/include'
         elif name == 'LIBEXECDIR':
             return WITH_WINDOWS_APACHE + '/lib'
+        else:
+            return ''
+
+    def get_apr_includes():
+        return ''
+
+    def get_apu_includes():
+        return ''
+
+elif WITH_MACOSX_APACHE:
+    def get_apxs_config(name):
+        if name == 'BINDIR':
+            return '/usr/bin'
+        elif name == 'SBINDIR':
+            return '/usr/sbin'
+        elif name == 'LIBEXECDIR':
+            return '/usr/libexec/apache2'
+        elif name == 'PROGNAME':
+            return 'httpd'
+        elif name == 'SHLIBPATH_VAR':
+            return 'DYLD_LIBRARY_PATH'
         else:
             return ''
 
@@ -276,13 +315,34 @@ APU_CONFIG = get_apxs_config('APU_CONFIG')
 # case we manually set the locations of the Apache and APR header files.
 
 if (not os.path.exists(APR_CONFIG) and
+        os.path.exists('/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk')):
+    INCLUDEDIR = '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/apache2'
+    APR_INCLUDES = ['-I/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/apr-1']
+    APU_INCLUDES = []
+
+elif (not os.path.exists(APR_CONFIG) and
         os.path.exists('/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-migrator/sdks/MacOSX.sdk')):
     INCLUDEDIR = '/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-migrator/sdks/MacOSX.sdk/usr/include/apache2'
     APR_INCLUDES = ['-I/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-migrator/sdks/MacOSX.sdk/usr/include/apr-1']
     APU_INCLUDES = []
+
 else:
     APR_INCLUDES = get_apr_includes().split()
     APU_INCLUDES = get_apu_includes().split()
+
+if not os.path.exists(APR_CONFIG) and not INCLUDEDIR:
+    if sys.platform == 'darwin':
+        # Likely no Xcode application installed or location of SDK in
+        # Xcode has changed with a new release of Xcode application.
+
+        raise RuntimeError('No Apache installation can be found, do you '
+                'have the full Apple Xcode installed. It is not enough to '
+                'have just the xcode command line tools installed.')
+    else:
+        # Set INCLUDEDIR just to avoid having an empty path. Probably
+        # should raise an exception here.
+
+        INCLUDEDIR = '/usr/include'
 
 # Write out apxs_config.py which caches various configuration related to
 # Apache. For the case of using our own Apache build, this needs to
@@ -382,6 +442,8 @@ else:
 
     if PYTHON_LDVERSION and PYTHON_LDVERSION != PYTHON_VERSION:
         PYTHON_CFGDIR = '%s-%s' % (PYTHON_CFGDIR, PYTHON_LDVERSION)
+        if not os.path.exists(PYTHON_CFGDIR):
+            PYTHON_CFGDIR = '%s-%s' % (PYTHON_CFGDIR, sys.platform)
 
     PYTHON_LDFLAGS = ['-L%s' % PYTHON_LIBDIR, '-L%s' % PYTHON_CFGDIR]
     PYTHON_LDLIBS = ['-lpython%s' % PYTHON_LDVERSION]
@@ -510,6 +572,7 @@ setup(name = 'mod_wsgi',
         'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
         'Topic :: Internet :: WWW/HTTP :: WSGI',
         'Topic :: Internet :: WWW/HTTP :: WSGI :: Server'
     ],
@@ -524,4 +587,5 @@ setup(name = 'mod_wsgi',
     ext_modules = [extension],
     entry_points = { 'console_scripts':
         ['mod_wsgi-express = mod_wsgi.server:main'],},
+    zip_safe = False,
 )
