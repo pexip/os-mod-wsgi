@@ -1,3 +1,72 @@
+mod-wsgi (4.7.1-3) unstable; urgency=medium
+
+  [ Stefano Rivera ]
+  * Team upload.
+
+  [ Ondřej Nový ]
+  * d/control: Update Maintainer field with new Debian Python Team
+    contact address.
+  * d/rules: Remove trailing whitespaces.
+  * d/control: Update Vcs-* fields with new Debian Python Team Salsa
+    layout.
+
+  [ Stefano Rivera ]
+  * Re-adapt debian/rules to support multiple Python 3 supperted versions
+    (removed with 2.7 support). Closes: #862434.
+
+ -- Stefano Rivera <stefanor@debian.org>  Thu, 15 Oct 2020 12:48:24 -0700
+
+mod-wsgi (4.7.1-2) unstable; urgency=medium
+
+  [ Emmanuel Arias ]
+  * Remove py2 support. Closes: #937062.
+    - No need to instal older py2 packages. Closes: #968079.
+  * Set myself as Uploaders.
+  * d/rules: Stop use dh --paralel, it's not longer need.
+  * d/tests: Remove autopkgtest for py2.
+  * d/source/lintian-overrides: Override lintian error.
+    - Override a false positive about the python3 dependency and
+      python3 helper is not used.
+
+  [ Sergio Durigan Junior ]
+  * d/copyright: Update download URL.
+  * d/control: Remove needless dh-autoreconf B-D.
+  * d/rules: Simplify "pkgdir" variable.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Tue, 25 Aug 2020 07:40:03 -0300
+
+mod-wsgi (4.7.1-1) unstable; urgency=medium
+
+  [ Emmanuel Arias ]
+  * Team upload.
+  * Depend on the python2.7 binary package for the 2.7 interpreter.
+    (Closes: #966763)
+  * d/control: Bump debhelper-compat to 11 (from 9).
+  * d/control: Bump Standards-Version to 4.5.0.
+  * New upstream version 4.7.1.
+  * Run wrap-and-sort.
+  * d/gbp.conf: use debian/master as default branch.
+
+  [ Bernd Zeimetz ]
+  * Removing myself from Uploaders.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Tue, 18 Aug 2020 22:44:12 -0300
+
+mod-wsgi (4.6.8-1) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * Use debhelper-compat instead of debian/compat.
+
+  [ Bernd Zeimetz ]
+  * [0dd1e46] use salsa CI
+  * [83f0e68] Update upstream source from tag 'upstream/4.6.8'
+    Update to upstream version '4.6.8'
+    with Debian dir 54c4f71125211a3d91e80f11588fb02a87bc0a41
+    Closes: #942684
+  * [09eb90b] Provide httpd-wsgi3 for python3 (Closes: #769052)
+
+ -- Bernd Zeimetz <bzed@debian.org>  Wed, 20 Nov 2019 06:27:08 +0100
+
 mod-wsgi (4.6.5-1) unstable; urgency=medium
 
   [ Ondřej Nový ]

@@ -1,40 +1,21 @@
 Source: mod-wsgi
 Section: httpd
 Priority: optional
-Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
-Uploaders: Bernd Zeimetz <bzed@debian.org>
+Maintainer: Debian Python Team <team+python@tracker.debian.org>
+Uploaders: Emmanuel Arias <eamanu@yaerobi.com>
 Build-Depends: apache2-dev (>= 2.4),
-               debhelper (>= 9),
-               dh-autoreconf,
-               python-all-dev,
-               python3-all-dev,
+               debhelper-compat (= 11),
+               python3-all-dev
 Homepage: http://www.modwsgi.org/
-Standards-Version: 3.9.5
-Vcs-Git: https://salsa.debian.org/python-team/modules/mod-wsgi.git
-Vcs-Browser: https://salsa.debian.org/python-team/modules/mod-wsgi
-
-Package: libapache2-mod-wsgi
-Architecture: any
-Depends: ${misc:Depends},
-         ${python:Depends},
-         ${shlibs:Depends},
-Provides: httpd-wsgi,
-Description: Python WSGI adapter module for Apache
- The mod_wsgi adapter is an Apache module that provides a WSGI (Web Server
- Gateway Interface, a standard interface between web server software and
- web applications written in Python) compliant interface for hosting Python
- based web applications within Apache. The adapter provides significantly
- better performance than using existing WSGI adapters for mod_python or CGI.
- .
- This package provides module for Python 2.X.
+Standards-Version: 4.5.0
+Vcs-Git: https://salsa.debian.org/python-team/packages/mod-wsgi.git
+Vcs-Browser: https://salsa.debian.org/python-team/packages/mod-wsgi
 
 Package: libapache2-mod-wsgi-py3
 Architecture: any
-Depends: ${misc:Depends},
-         ${python3:Depends},
-         ${shlibs:Depends},
-Conflicts: libapache2-mod-wsgi,
-Provides: httpd-wsgi,
+Depends: ${misc:Depends}, ${python3:Depends}, ${shlibs:Depends}
+Conflicts: libapache2-mod-wsgi
+Provides: httpd-wsgi3
 Description: Python 3 WSGI adapter module for Apache
  The mod_wsgi adapter is an Apache module that provides a WSGI (Web Server
  Gateway Interface, a standard interface between web server software and

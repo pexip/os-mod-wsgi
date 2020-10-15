@@ -184,7 +184,7 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
     Only one of ``script-user`` or ``script-group`` option can be used at
     the same time.
 
-**script-group=name | scrip-group=#gid**
+**script-group=name | script-group=#gid**
     Sets the group that must be the group of any WSGI script file delegated
     to be run in the daemon process group. If the group doesn't match a
     HTTP Forbidden response will be returned for any request.
@@ -240,9 +240,9 @@ Options which can be supplied to the ``WSGIDaemonProcess`` directive are:
     Note that the directory specified must exist and be writable by the
     user that the daemon process run as.
 
-**restart-interval=nnn**
-    Defines a time limit on how long a daemon process should run before
-    being restarted.
+**restart-interval=sss**
+    Defines a time limit in seconds for how long a daemon process should
+    run before being restarted.
 
     This might be use to periodically force restart the WSGI application
     processes when you have issues related to Python object reference count
