@@ -1,3 +1,10 @@
+mod-wsgi (4.6.5-1pexip5) pexip; urgency=medium
+
+  * Blank out libapache2-mod-wsgi.postrm. We do not want it breaking
+    the world on purge. Fixes #24807.
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Wed, 18 Aug 2021 14:39:36 +0100
+
 mod-wsgi (4.6.5-1pexip4) pexip; urgency=medium
 
   * Add Breaks to ensure that python2 version is deconfigured before python3

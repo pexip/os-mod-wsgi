@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# Deliberately empty postrm. Do *NOT* attempt to remove things on
+# purge, as we may have just installed the libapache2-mod-wsgi-py3
+# package that fulfils the same purpose
+
+exit 0
