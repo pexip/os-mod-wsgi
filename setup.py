@@ -424,6 +424,8 @@ PYTHON_VERSION = get_python_config('VERSION')
 if os.name == 'nt':
     if hasattr(sys, 'real_prefix'):
         PYTHON_LIBDIR = sys.real_prefix
+    elif hasattr(sys, 'base_prefix'):
+        PYTHON_LIBDIR = sys.base_prefix
     else:
         PYTHON_LIBDIR = get_python_config('BINDIR')
 
@@ -542,9 +544,16 @@ if os.name != 'nt':
 
 # Now finally run distutils.
 
+package_name = 'mod_wsgi'
 long_description = open('README.rst').read()
 
-setup(name = 'mod_wsgi',
+standalone = os.path.exists('pyproject.toml')
+
+if standalone:
+    package_name = 'mod_wsgi-standalone'
+    long_description = open('README-standalone.rst').read()
+
+setup(name = package_name,
     version = _version(),
     description = 'Installer for Apache/mod_wsgi.',
     long_description = long_description,
@@ -573,6 +582,8 @@ setup(name = 'mod_wsgi',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
         'Topic :: Internet :: WWW/HTTP :: WSGI',
         'Topic :: Internet :: WWW/HTTP :: WSGI :: Server'
     ],
@@ -588,4 +599,5 @@ setup(name = 'mod_wsgi',
     entry_points = { 'console_scripts':
         ['mod_wsgi-express = mod_wsgi.server:main'],},
     zip_safe = False,
+    install_requires = standalone and ['mod_wsgi-httpd==2.4.41.1'] or [],
 )
