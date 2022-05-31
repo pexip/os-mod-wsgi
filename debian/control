@@ -13,7 +13,7 @@ Homepage: http://www.modwsgi.org/
 Standards-Version: 3.9.5
 Vcs-Git: https://salsa.debian.org/python-team/modules/mod-wsgi.git
 Vcs-Browser: https://salsa.debian.org/python-team/modules/mod-wsgi
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ buster
+XS-Pexip-Upstream: http://deb.debian.org/debian/ bullseye
 
 Package: libapache2-mod-wsgi
 Architecture: any
