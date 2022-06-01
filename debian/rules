@@ -3,56 +3,48 @@
 PACKAGE=libapache2-mod-wsgi
 
 APXS2=/usr/bin/apxs2
-PYVERS=$(shell pyversions -vs)
-PYDEFAULT=$(shell pyversions -dv)
-PYMIN=$(shell echo $(PYVERS) | awk '{print $$1}')
-PYMAX=$(shell echo $(PYVERS) | LANG=C awk '{print $$NF+0.1}')
 PY3VERS=$(shell py3versions -vs)
 PY3DEFAULT=$(shell py3versions -dv)
 PY3MIN=$(shell for VERSION in $(PY3VERS); do echo $$VERSION; done | sort | head -1)
 PY3MAX=$(shell for VERSION in $(PY3VERS); do echo $$VERSION; done | sort | tail -1 | LANG=C awk '{print $$NF+0.1}')
-pkgdir = $(CURDIR)/debian/$(PACKAGE)$(if $(patsubst 3.%,,$(1)),,-py3)
+pkgdir = $(CURDIR)/debian/$(PACKAGE)-py3
 
 %:
-	dh $@ --parallel --with autoreconf,apache2
+	dh $@ --with autoreconf,apache2
+
+override_dh_auto_configure: $(patsubst %,build-%/config.status,$(PY3VERS))
 
 build-%/config.status:
 	mkdir -p build-$*
 	find . -mindepth 1 -maxdepth 1 -name 'debian' -o -name 'build-*' -o -exec cp -r {} build-$* \;
 	dh_auto_configure -Bbuild-$* -- --with-apxs=$(APXS2) --with-python=/usr/bin/python$*
 
+override_dh_auto_build: $(patsubst %,build-%/build-stamp,$(PY3VERS))
+
 build-%/build-stamp:
 	dh_auto_build -Bbuild-$*
 	touch $@
+
+override_dh_auto_install: $(patsubst %,install-%,$(PY3VERS))
 
 install-%:
 	dh_auto_install -Bbuild-$* -- DESTDIR=$(call pkgdir,$*)
 	mv $(call pkgdir,$*)/usr/lib/apache2/modules/mod_wsgi.so \
 		$(call pkgdir,$*)/usr/lib/apache2/modules/mod_wsgi.so-$*
 
-override_dh_auto_configure: $(PYVERS:%=build-%/config.status) $(PY3VERS:%=build-%/config.status)
-
-override_dh_auto_build: $(PYVERS:%=build-%/build-stamp) $(PY3VERS:%=build-%/build-stamp)
-
-override_dh_auto_install: $(PYVERS:%=install-%) $(PY3VERS:%=install-%)
-
 override_dh_auto_clean:
 	rm -rf build-*
 
 override_dh_install:
 	dh_install
-	chmod 755 debian/$(PACKAGE)/usr/share/python/runtime.d/libapache2-mod-wsgi.rtupdate
 	chmod 755 debian/$(PACKAGE)-py3/usr/share/python3/runtime.d/libapache2-mod-wsgi-py3.rtupdate
 
 override_dh_link:
-	dh_link -p $(PACKAGE) /usr/lib/apache2/modules/mod_wsgi.so-$(PYDEFAULT) usr/lib/apache2/modules/mod_wsgi.so
 	dh_link -p $(PACKAGE)-py3 /usr/lib/apache2/modules/mod_wsgi.so-$(PY3DEFAULT) usr/lib/apache2/modules/mod_wsgi.so
 	dh_link --remaining-packages
 
 override_dh_gencontrol:
 	# Generate dependencies manually as there are no public modules
-	echo 'python:Depends=python (>= $(PYMIN)), python (<< $(PYMAX))' \
-	     >> $(CURDIR)/debian/$(PACKAGE).substvars
 	echo 'python3:Depends=python3 (>= $(PY3MIN)), python3 (<< $(PY3MAX))' \
 	     >> $(CURDIR)/debian/$(PACKAGE)-py3.substvars
 	dh_gencontrol
